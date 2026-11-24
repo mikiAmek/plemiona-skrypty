@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.2.1';
+	const VERSION = 'v2.2.2';
 	const NS = 'RowneZbieractwo';
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
@@ -289,6 +289,9 @@
 		for (let i = 0; i < 15 && colBox().prop('disabled'); i++) { await new Promise(r => setTimeout(r, 100)); }
 		if (colBox().prop('disabled')) { return 0; }
 		colBox().trigger('click');
+		// tylko przewinięcie widoku do tabeli i przycisku „Wyślij” (nad tabelą) – bez kursora na przycisku
+		const table = screen.find('.mass-scavenge-table');
+		if (table.length) { window.scrollTo({ top: Math.max(0, table.offset().top - 160), behavior: 'smooth' }); }
 		return screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).length;
 	}
 
