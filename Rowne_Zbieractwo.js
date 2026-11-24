@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.1.0
+ * Równe Zbieractwo v2.6.0
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -7,11 +7,13 @@
  *
  * Zaznaczasz jednostki, a skrypt sam dobiera wspólny zestaw wojsk dla wiosek z aktywnej grupy (wszystkie strony)
  * i dzieli go na poziomy tak, żeby wszystkie oddziały wróciły o tej samej godzinie.
- * Każde kliknięcie skrótu (albo „Następny krok”) = jedna akcja: wpisuje zestaw kolejnego poziomu w formularz gry
- * i zaznacza jego kolumnę (gra sama zaznacza tylko wioski, które mają tyle wojsk) albo przechodzi na następną stronę.
+ * Każde kliknięcie skrótu (albo przycisku „Następny krok”) = jedna akcja: wpisuje zestaw kolejnego poziomu
+ * w formularz gry i zaznacza jego kolumnę („Zaznacz wszystkie” gry – gra zaznacza tylko wioski, które mają tyle wojsk;
+ * skrypt odznacza te, które według planu nie powinny wysyłać, np. przez rezerwę) albo przechodzi na następną stronę.
  * Wysyłasz SAM przyciskiem „Wyślij” gry.
  *
- * Skrypt niczego nie wysyła, nie klika i nie ustawia kursora na przycisku „Wyślij”.
+ * Skrypt niczego nie wysyła: nie klika „Wyślij” i nie ustawia na nim kursora. Dane wiosek czyta zwykłymi
+ * zapytaniami GET do strony Zbieractwa masowego (tylko odczyt, z przerwą między stronami).
  * Wymaga Konta Premium (Zbieractwo masowe to funkcja premium).
  * Ustawienia z panelu są zapamiętywane w przeglądarce (localStorage), osobno dla każdego konta.
  * Skrypt nie używa ciasteczek i nie łączy się z żadnymi stronami poza serwerem gry.
@@ -30,12 +32,13 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.4.6';
+	const VERSION = 'v2.6.0';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
+	const PAGE_DELAY = 250;             // ms przerwy między pobieraniem kolejnych stron (bez zasypywania serwera)
 	const SCAV_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'knight'];
 	const UNIT_NAMES = {
 		spear: 'Pikinier', sword: 'Miecznik', axe: 'Topornik', archer: 'Łucznik',
@@ -46,8 +49,10 @@
 		units: { spear: false, sword: false, axe: false, archer: false, light: true, marcher: false, heavy: false, knight: false },
 		reserve: { spear: 0, sword: 0, axe: 0, archer: 0, light: 0, marcher: 0, heavy: 0, knight: 0 },
 		levels: [true, true, true, true],
-		mode: 'best',      // 'best' – najwięcej łupu na godzinę; 'time' – powrót po zadanym czasie
+		mode: 'best',      // 'best' – Optymalnie (najwięcej łupu na godzinę); 'time' – Wróć po; 'fill' – Uzupełnij
 		hours: 2,
+		rangeMin: 1,       // Optymalnie: zakres czasu powrotu w godzinach, 0 = bez ograniczenia
+		rangeMax: 3,
 		tolMin: 3          // uzupełnianie: o ile minut później niż już wysłane może wrócić nowy oddział
 	};
 
@@ -61,7 +66,14 @@
 	const sitterParam = () =>
 		(game_data.player.sitter && game_data.player.sitter !== '0') ? '&t=' + game_data.player.id : '';
 
-	const fmtHours = h => Number.isInteger(h) ? String(h) : Math.floor(h) + ':' + String(Math.round(h % 1 * 60)).padStart(2, '0');
+	const fmtHours = h => { const m = Math.round(h * 60); return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); };
+	// Czas w formacie g:mm, np. 1:35 (samo „2” = 2:00); puste → 0, błędne → NaN
+	const parseHours = raw => {
+		raw = String(raw ?? '').trim();
+		if (raw === '') { return 0; }
+		const hm = raw.match(/^(\d+)(?::([0-5]\d))?$/);
+		return hm ? Number(hm[1]) + Number(hm[2] || 0) / 60 : NaN;
+	};
 	const storageKey = key => NS + '_' + game_data.player.id + '_' + key;
 	function storageGet(key) {
 		try { return JSON.parse(localStorage.getItem(storageKey(key))); } catch (e) { return null; }
@@ -83,6 +95,7 @@
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
 		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
+		for (const k of ['rangeMin', 'rangeMax']) { if (Number.isFinite(saved[k]) && saved[k] >= 0) { s[k] = saved[k]; } }
 		if (Number.isFinite(saved.tolMin) && saved.tolMin >= 0) { s.tolMin = saved.tolMin; }
 		return s;
 	}
@@ -135,6 +148,7 @@
 		const seen = new Set();
 		let pages = 0;
 		for (let page = 0; page < 40; page++) {
+			if (page > 0) { await new Promise(r => setTimeout(r, PAGE_DELAY)); }
 			const html = await $.get(pageUrl(page));
 			const data = parseMassPage(html);
 			options = options || data.options;
@@ -199,12 +213,13 @@
 
 		// Przeszukanie: poziomy × mieszanki × wielkość zestawu.
 		// targetSec ustawione → zestaw na zadany czas (wynik: najwięcej łupu); brak → najwięcej łupu na godzinę.
-		const search = (pool, targetSec) => {
+		const search = (pool, targetSec, range) => {
 			let found = null;
 			let tooShort = false;
-			const simulate = (templates, units) => {
+			const simulate = (templates, units, record) => {
 				let loot = 0;
 				const counts = templates.map(() => 0);
+				const sends = record ? templates.map(() => []) : null;
 				for (const x of pool) {
 					const rest = Object.assign({}, x.avail);
 					const cf = x.v.unit_carry_factor || 1;
@@ -213,11 +228,13 @@
 						if (units.some(u => rest[u] < tp.units[u])) { return; }
 						units.forEach(u => { rest[u] -= tp.units[u]; });
 						counts[i]++;
+						if (sends) { sends[i].push(x.v.village_id); }
 						loot += carryOf(tp.units, units) * cf * data.options[tp.optionId].loot_factor;
 					});
 				}
-				const opt = data.options[templates[0].optionId];
-				return { loot, counts, seconds: duration(opt, carryOf(templates[0].units, units) * opt.loot_factor) };
+				// poziomy wracają razem, ale zaokrąglenie liczby jednostek daje kilka sekund różnicy – podajemy najdłuższy
+				const seconds = Math.max(...templates.map(tp => duration(data.options[tp.optionId], carryOf(tp.units, units) * data.options[tp.optionId].loot_factor)));
+				return { loot, counts, seconds, sends };
 			};
 			const poolMixes = mixesFor(pool);
 			const poolLevels = levels.filter(id => pool.some(x => x.free.includes(id)));
@@ -238,8 +255,9 @@
 						const r = simulate(tps, units);
 						if (!r.loot) { return; }
 						const perHour = r.loot / (r.seconds / 3600);
+						if (!targetSec && range && (r.seconds < range[0] || r.seconds > range[1])) { return; }
 						const score = targetSec ? r.loot : perHour;
-						if (!found || score > found.score) { found = { s: sc, templates: tps, perHour, score, usedUnits: units, ...r }; }
+						if (!found || score > found.score) { found = { s: sc, templates: tps, perHour, score, usedUnits: units, ...simulate(tps, units, true) }; }
 					};
 					if (targetSec) {
 						const opt = data.options[lv[0]];
@@ -289,7 +307,7 @@
 					'W tym czasie nie zmieści się oddział min. 10 populacji na wolny poziom.';
 			}
 		} else if (settings.mode === 'time') {
-			if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz np. 1:35 (1 h 35 min) albo 1,5 (półtorej godziny).'; }
+			if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz w formacie g:mm, np. 1:35.'; }
 			const r = search(active, settings.hours * 3600);
 			best = r.found;
 			if (!best) {
@@ -298,10 +316,31 @@
 					: 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.';
 			}
 		} else {
-			best = search(active, 0).found;
-			if (!best) { throw 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.'; }
+			const lo = settings.rangeMin, hi = settings.rangeMax;
+			if (Number.isNaN(lo) || Number.isNaN(hi)) { throw 'Nieprawidłowy zakres czasu – wpisz w formacie g:mm, np. 1:00 i 2:30 (puste pole = bez ograniczenia).'; }
+			if (lo && hi && lo > hi) { throw 'Zakres czasu: „od” jest większe niż „do”.'; }
+			const range = lo || hi ? [lo ? lo * 3600 : 0, hi ? hi * 3600 : Infinity] : null;
+			best = search(active, 0, range).found;
+			if (!best) {
+				throw range
+					? 'W tym zakresie czasu nie da się złożyć zestawu – przy tych wojskach zmniejsz „od” albo zwiększ „do”.'
+					: 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.';
+			}
 		}
 		best.limits = limits;
+		// które wioski wysyłają na który poziom (wg planu) – pozostałe skrypt odznacza przy wypełnianiu
+		best.allowed = {};
+		best.templates.forEach((tp, i) => { best.allowed[tp.optionId] = best.sends[i]; });
+		delete best.sends;
+		best.opts = {};
+		levels.forEach(id => {
+			const o = data.options[id];
+			best.opts[id] = { loot_factor: o.loot_factor, duration_exponent: o.duration_exponent, duration_initial_seconds: o.duration_initial_seconds, duration_factor: o.duration_factor };
+		});
+		best.carry = {};
+		unitIds.forEach(u => { best.carry[u] = data.units[u].carry; });
+		best.cf = {};
+		active.forEach(x => { if ((x.v.unit_carry_factor || 1) !== 1) { best.cf[x.v.village_id] = x.v.unit_carry_factor; } });
 		best.tolSec = settings.mode === 'fill' ? settings.tolMin * 60 : 0;
 		// poziomy, na które żadna wioska nie wyśle, wypadają z planu (pozostałe i tak wracają razem)
 		const keep = best.counts.map(c => c > 0);
@@ -325,7 +364,9 @@
 		const screen = $('#scavenge_mass_screen');
 		const inputs = screen.find('.candidate-squad-widget input.unitsInput');
 		if (!inputs.length) { throw 'Nie znaleziono formularza Zbieractwa masowego na tej stronie.'; }
-		screen.find('.mass-scavenge-table input[type=checkbox]:checked').each(function () { $(this).trigger('click'); });
+		// odznacz wszystko: najpierw „Zaznacz wszystkie” (gra odznacza wtedy całą kolumnę), potem pojedyncze wioski
+		screen.find('.mass-scavenge-table input.select-all-col:checked').each(function () { $(this).trigger('click'); });
+		screen.find('.mass-scavenge-table td[class*="option-"] input[type=checkbox]:checked').each(function () { $(this).trigger('click'); });
 		inputs.each(function () { setInput(this, template.units[this.name] ? template.units[this.name] : ''); });
 		// gra odblokowuje pola wyboru dopiero po przeliczeniu wpisanego zestawu – czekamy do 1,5 s
 		const colBox = () => screen.find(`.select-all-col[data-option="${template.optionId}"]`);
@@ -333,14 +374,21 @@
 		for (let i = 0; i < 15 && colBox().prop('disabled'); i++) { await new Promise(r => setTimeout(r, 100)); }
 		if (colBox().prop('disabled')) { return 0; }
 		colBox().trigger('click');
-		// tryb uzupełniania: odznaczamy wioski, w których nowy oddział wróciłby później niż już wysłane
-		if (plan && plan.limits) {
-			const end = serverNow() + plan.seconds + FILL_MARGIN;
-			screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).each(function () {
-				const id = $(this).closest('tr').data('id');
-				if (plan.limits[id] && end > plan.limits[id] + (plan.tolSec || 0)) { $(this).trigger('click'); }
-			});
-		}
+		// gra zaznacza każdą wioskę, która ma tyle wojsk; odznaczamy te, które wg planu nie wysyłają na ten poziom
+		// (rezerwa „Zostaw w wiosce”, kolejność poziomów) oraz – w trybie Uzupełnij – te, które wróciłyby za późno
+		const allowed = plan && plan.allowed && plan.allowed[template.optionId] ? new Set(plan.allowed[template.optionId].map(Number)) : null;
+		const opt = plan && plan.opts ? plan.opts[template.optionId] : null;
+		const carry = Object.keys(template.units).reduce((a, u) => a + template.units[u] * ((plan && plan.carry && plan.carry[u]) || 0), 0);
+		screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).each(function () {
+			const id = Number($(this).closest('tr').data('id'));
+			let ok = !allowed || allowed.has(id);
+			if (ok && plan && plan.limits && plan.limits[id] && opt) {
+				const cf = (plan.cf && plan.cf[id]) || 1; // premia ładowności – liczona ostrożnie, jakby wydłużała zbieractwo
+				const end = serverNow() + duration(opt, carry * cf * opt.loot_factor) + FILL_MARGIN;
+				ok = end <= plan.limits[id] + (plan.tolSec || 0);
+			}
+			if (!ok) { $(this).trigger('click'); }
+		});
 		// tylko przewinięcie widoku do tabeli i przycisku „Wyślij” (nad tabelą) – bez kursora na przycisku
 		const table = screen.find('.mass-scavenge-table');
 		if (table.length) { window.scrollTo({ top: Math.max(0, table.offset().top - 160), behavior: 'smooth' }); }
@@ -382,8 +430,10 @@
 			ticked ? 'SuccessMessage' : 'ErrorMessage');
 			return;
 		}
-		if (step.page + 1 < plan.pages) {
-			plan.step = { page: step.page + 1, idx: 0 };
+		const order = plan.order || Array.from({ length: plan.pages }, (_, i) => i);
+		const pos = step.pos || 0;
+		if (pos + 1 < order.length) {
+			plan.step = { page: order[pos + 1], pos: pos + 1, idx: 0 };
 			storageSet('plan2', plan);
 			location.href = pageUrl(plan.step.page);
 			return;
@@ -409,12 +459,12 @@
 		}
 		s.levels = [1, 2, 3, 4].map(i => $(`#${NS}_level_${i}`).is(':checked'));
 		s.mode = $(`input[name=${NS}_mode]:checked`).val() || 'best';
-		// „1:35” = 1 h 35 min, „1,5” / „1.5” = półtorej godziny
-		const rawH = String($(`#${NS}_hours`).val() ?? '').trim();
-		const hm = rawH.match(/^(\d+):(\d{1,2})$/);
-		const hours = hm ? Number(hm[1]) + Number(hm[2]) / 60 : Number(rawH.replace(',', '.'));
+		const hours = parseHours($(`#${NS}_hours`).val());
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
 		s.hoursValid = hours > 0;
+		// zakres czasu powrotu w trybie Optymalnie (puste pole = bez ograniczenia)
+		s.rangeMin = parseHours($(`#${NS}_rmin`).val());
+		s.rangeMax = parseHours($(`#${NS}_rmax`).val());
 		const tol = Number(String($(`#${NS}_tol`).val() ?? '').replace(',', '.'));
 		s.tolMin = tol >= 0 ? tol : DEFAULTS.tolMin;
 		return s;
@@ -443,12 +493,13 @@
 				<tr><td style="vertical-align:top">Tryb</td><td colspan="2">
 					<table style="border-collapse:collapse">
 						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
-								<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label></td>
-							<td style="padding:3px 0"><small>skrypt sam dobiera zestaw i czas powrotu – najwięcej surowców w przeliczeniu na godzinę</small></td></tr>
+								<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label>
+								<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:40px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:40px"></td>
+							<td style="padding:3px 0"><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę) w zakresie od–do; puste pole = bez ograniczenia</small></td></tr>
 						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
 								<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
-								<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" style="width:45px"> h</td>
-							<td style="padding:3px 0"><small>wszystkie oddziały wracają po zadanym czasie, np. 1:35 albo 1,5</small></td></tr>
+								<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" placeholder="g:mm" style="width:45px"></td>
+							<td style="padding:3px 0"><small>wszystkie oddziały wracają po zadanym czasie</small></td></tr>
 						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
 								<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij</b></label>
 								+<input type="text" id="${NS}_tol" value="${settings.tolMin}" style="width:30px"> min</td>
@@ -494,10 +545,21 @@
 		const el = $('#' + NS + '_progress');
 		if (!plan) { el.html('<b>Gotowe.</b>'); $(`#${NS}_next, #${NS}_next2`).addClass('btn-disabled'); return; }
 		const { page, idx } = plan.step;
+		const order = plan.order || Array.from({ length: plan.pages }, (_, i) => i);
+		const pos = plan.step.pos || 0;
 		const what = idx < plan.templates.length
 			? `wypełnienie poziomu ${plan.templates[idx].optionId}`
-			: (page + 1 < plan.pages ? `przejście na stronę ${page + 2}` : 'koniec');
-		el.html(`Następnie: <b>${what}</b> (strona ${page + 1} z ${plan.pages})`);
+			: (pos + 1 < order.length ? `przejście na stronę ${order[pos + 1] + 1}` : 'koniec');
+		el.html(`Następnie: <b>${what}</b> (strona ${page + 1}; ${pos + 1}. z ${plan.pages})`);
+	}
+
+	// Jeden krok naraz – skrót, „Następny krok” i przycisk pod „Wyślij” nie mogą wypełniać jednocześnie
+	async function runStep() {
+		if (window[NS + '_busy']) { return; }
+		window[NS + '_busy'] = true;
+		try { await nextStep(); }
+		catch (ex) { notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się wypełnić formularza.')); }
+		finally { window[NS + '_busy'] = false; }
 	}
 
 	// ---------- Start ----------
@@ -523,7 +585,7 @@
 
 		// panel już otwarty → skrót wykonuje następny krok planu
 		if ($('#' + NS).length) {
-			if (loadPlan()) { nextStep().catch(ex => notify(NAME + ': ' + ex)); }
+			if (loadPlan()) { runStep(); }
 			else { notify(NAME + ': kliknij „Oblicz zestaw”.', 'InfoMessage'); }
 			return;
 		}
@@ -532,13 +594,13 @@
 		let busy = false;
 		let existing = loadPlan();
 		// zakończony plan z poprzedniego użycia – usuwamy po cichu, bez komunikatu „gotowe”
-		if (existing && existing.step.idx >= existing.templates.length && existing.step.page + 1 >= existing.pages) {
+		if (existing && existing.step.idx >= existing.templates.length && (existing.step.pos || 0) + 1 >= (existing.order || [0]).length) {
 			storageRemove('plan2');
 			existing = null;
 		}
 		if (existing) {
 			renderPlan(existing);
-			nextStep().catch(ex => notify(NAME + ': ' + ex)); // np. po przejściu na następną stronę
+			runStep(); // np. po przejściu na następną stronę
 		}
 
 		$('#' + NS + '_calc').on('click', async () => {
@@ -548,7 +610,9 @@
 			try {
 				const plan = createPlan(await fetchAllPages(), readPanel());
 				plan.time = Date.now();
-				plan.step = { page: currentPage() < plan.pages ? currentPage() : 0, idx: 0 };
+				const cur = currentPage() < plan.pages ? currentPage() : 0;
+				plan.order = [cur, ...Array.from({ length: plan.pages }, (_, i) => i).filter(i => i !== cur)];
+				plan.step = { page: cur, pos: 0, idx: 0 };
 				storageSet('plan2', plan);
 				renderPlan(plan);
 			} catch (ex) {
@@ -565,13 +629,7 @@
 		if (sendRow.length && !$('#' + NS + '_next2').length) {
 			sendRow.after(`<div style="margin:6px 0;text-align:right"><input type="button" class="btn" id="${NS}_next2" value="Równe Zbieractwo: następny krok"></div>`);
 		}
-		$(document).on('click', `#${NS}_next, #${NS}_next2`, async () => {
-			if (busy) { return; }
-			busy = true;
-			try { await nextStep(); }
-			catch (ex) { notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się wypełnić formularza.')); }
-			finally { busy = false; }
-		});
+		$(document).on('click', `#${NS}_next, #${NS}_next2`, runStep);
 	} catch (ex) {
 		notify(NAME + ' ' + VERSION + ': błąd – ' + (ex && ex.message ? ex.message : ex));
 		console.error(NAME, ex);
