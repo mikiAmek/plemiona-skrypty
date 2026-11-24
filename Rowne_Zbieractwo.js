@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v1.0.0
+ * Równe Zbieractwo v1.0.4
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -28,9 +28,10 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.0';
+	const VERSION = 'v1.0.4';
 	const NS = 'RowneZbieractwo';
 	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
+	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 10 * 60 * 1000;    // plan starszy niż 10 min trzeba przeliczyć (wojska mogły się zmienić)
 	const SCAV_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'knight'];
 	const UNIT_NAMES = {
@@ -39,12 +40,11 @@
 	};
 
 	const DEFAULTS = {
-		units: { spear: true, sword: true, axe: false, archer: false, light: true, marcher: false, heavy: false, knight: false },
+		units: { spear: false, sword: false, axe: false, archer: false, light: true, marcher: false, heavy: false, knight: false },
 		reserve: { spear: 0, sword: 0, axe: 0, archer: 0, light: 0, marcher: 0, heavy: 0, knight: 0 },
 		levels: [true, true, true, true],
 		mode: 'equal',     // 'equal' – wszystkie dostępne wojska, równy powrót; 'time' – tylko tyle, ile trzeba na zadany czas
-		hours: 2,
-		minPop: 10         // gra przyjmuje oddział od 10 populacji
+		hours: 1
 	};
 
 	// ---------- Pomocnicze ----------
@@ -76,7 +76,6 @@
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
 		if (saved.mode === 'time' || saved.mode === 'equal') { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
-		if (Number.isFinite(saved.minPop) && saved.minPop > 0) { s.minPop = saved.minPop; }
 		return s;
 	}
 
@@ -211,8 +210,8 @@
 				}
 			}
 
-			// Gra przyjmuje oddział od `minPop` populacji – jeśli któryś poziom nie dobija, odpada najsłabszy poziom
-			if (counts.some(c => popOf(c) < settings.minPop)) {
+			// Gra przyjmuje oddział od MIN_POP populacji – jeśli któryś poziom nie dobija, odpada najsłabszy poziom
+			if (counts.some(c => popOf(c) < MIN_POP)) {
 				levels = levels.slice(1);
 				continue;
 			}
@@ -226,13 +225,18 @@
 			});
 			return { squads, reason: '' };
 		}
-		return { squads: [], reason: 'za mało wojsk (min. ' + settings.minPop + ' populacji na oddział)' };
+		return { squads: [], reason: 'za mało wojsk (min. ' + MIN_POP + ' populacji na oddział)' };
 	}
 
 	function createPlan(data, settings) {
 		if (!SCAV_UNITS.some(u => settings.units[u])) { throw 'Zaznacz co najmniej jedną jednostkę.'; }
 		if (!settings.levels.some(Boolean)) { throw 'Zaznacz co najmniej jeden poziom zbieractwa.'; }
 		if (settings.mode === 'time' && !(settings.hours > 0)) { throw 'Wpisz czas zbieractwa w godzinach.'; }
+		if (settings.mode === 'time') {
+			// najkrótsze możliwe zbieractwo (prawie pusty oddział) – krótszego czasu gra nie da
+			const shortest = Math.max(...Object.values(data.options).map(opt => duration(opt, 0)));
+			if (settings.hours * 3600 <= shortest) { throw 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(shortest) + '.'; }
+		}
 		return data.villages.map(v => ({ village: v, ...planVillage(v, data, settings) }));
 	}
 
@@ -253,8 +257,6 @@
 		s.mode = $(`input[name=${NS}_mode]:checked`).val() === 'time' ? 'time' : 'equal';
 		const hours = Number(String($(`#${NS}_hours`).val() ?? '').replace(',', '.'));
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
-		const minPop = Math.floor(Number($(`#${NS}_minPop`).val()));
-		s.minPop = minPop > 0 ? minPop : DEFAULTS.minPop;
 		return s;
 	}
 
@@ -265,7 +267,7 @@
 				<td style="text-align:center"><input type="checkbox" id="${NS}_unit_${u}" ${settings.units[u] ? 'checked' : ''}></td>
 				<td><input type="number" min="0" id="${NS}_reserve_${u}" value="${settings.reserve[u]}" style="width:70px"></td></tr>`).join('');
 		const levelBoxes = [1, 2, 3, 4].map(i =>
-			`<label style="margin-right:10px"><input type="checkbox" id="${NS}_level_${i}" ${settings.levels[i - 1] ? 'checked' : ''}> ${i}</label>`).join('');
+			`<label style="display:inline-block;white-space:nowrap;margin-right:14px"><input type="checkbox" id="${NS}_level_${i}" ${settings.levels[i - 1] ? 'checked' : ''}> ${i}</label>`).join('');
 
 		const html = `
 		<div id="${NS}" class="vis vis_item" style="margin-bottom:10px;padding:8px">
@@ -275,15 +277,15 @@
 				<tr><th>Jednostka</th><th>Wysyłaj</th><th>Zostaw w wiosce</th></tr>
 				${unitRows}
 				<tr><th colspan="3">Poziomy i czas</th></tr>
-				<tr><td>Poziomy</td><td colspan="2">${levelBoxes}<br><small>używane są tylko odblokowane i wolne poziomy</small></td></tr>
+				<tr><td>Poziomy</td><td colspan="2"><div style="white-space:nowrap">${levelBoxes}</div>
+					<small>używane są tylko odblokowane i wolne poziomy; oddział musi mieć min. 10 populacji, inaczej pomijany jest najsłabszy poziom</small></td></tr>
 				<tr><td>Tryb</td><td colspan="2">
 					<label><input type="radio" name="${NS}_mode" value="equal" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Równy powrót</b> – wszystkie dostępne wojska, wszystkie poziomy wracają razem</label><br>
 					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Zadany czas</b> – tylko tyle wojsk, żeby wrócić po</label>
 					<input type="text" id="${NS}_hours" value="${settings.hours}" style="width:40px"> h
 					<br><small>gdy wojsk jest za mało na zadany czas, wysyłane są wszystkie i wracają wcześniej</small></td></tr>
-				<tr><td>Minimum na oddział</td><td colspan="2"><input type="number" min="1" id="${NS}_minPop" value="${settings.minPop}" style="width:50px"> populacji
-					<small>gdy poziom nie dobija do minimum, pomijany jest najsłabszy poziom</small></td></tr>
 			</table>
+			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
 			<div style="margin-top:8px">
 				<input type="button" class="btn" id="${NS}_calc" value="Oblicz plan">
 				<input type="button" class="btn btn-disabled" id="${NS}_send" value="Wyślij partię">
@@ -292,7 +294,18 @@
 		</div>`;
 		$('#content_value').prepend(html);
 
-		$('#' + NS).on('input change', 'input', () => storageSet('settings', readPanel()));
+		const update = () => {
+			const s = readPanel();
+			storageSet('settings', s);
+			// ostrzeżenie: zaznaczone jednostki bez rezerwy wyjadą z każdej wioski grupy, także z obrony
+			const noReserve = units.filter(u => s.units[u] && !s.reserve[u]).map(u => UNIT_NAMES[u]);
+			$('#' + NS + '_warn').html(noReserve.length
+				? `Uwaga: bez rezerwy (${noReserve.join(', ')}) – skrypt wyśle te jednostki w całości z każdej wioski grupy, także z obrony. ` +
+				'Wpisz „Zostaw w wiosce” albo wybierz grupę bez wiosek obronnych.'
+				: '');
+		};
+		$('#' + NS).on('input change', 'input', update);
+		update();
 	}
 
 	function renderPlan(plan, data) {
@@ -313,7 +326,7 @@
 			}).join('');
 			rows.push(`<tr><td>${esc(p.village.village_name)}</td>${cells}<td>${fmtTime(back)}</td><td>${fmt(haul)}</td></tr>`);
 		}
-		const header = [1, 2, 3, 4].map(id => `<th>${id}. ${esc(data.options[id] ? data.options[id].name : '')}</th>`).join('');
+		const header = [1, 2, 3, 4].map(id => `<th>Poziom ${id}</th>`).join('');
 		const batches = Math.ceil(plan.filter(p => p.squads.length).length / BATCH_VILLAGES);
 		$('#' + NS + '_plan').html(`
 			<p>Wiosek z wysyłką: <b>${plan.length - skipped}</b> z ${plan.length}, oddziałów: <b>${squadsTotal}</b>,
@@ -361,11 +374,13 @@
 	let planTime = 0;
 	let queue = [];
 	let busy = false;
+	let sentBatches = 0;
 
 	$('#' + NS + '_calc').on('click', async () => {
 		if (busy) { return; }
 		busy = true;
 		queue = [];
+		sentBatches = 0; // nowy plan – numeracja partii od początku
 		$('#' + NS + '_send').addClass('btn-disabled').val('Wyślij partię');
 		$('#' + NS + '_plan').html('<i>Pobieranie aktualnych wojsk ze wszystkich stron…</i>');
 		try {
@@ -388,7 +403,6 @@
 		}
 	});
 
-	let sentBatches = 0;
 	$('#' + NS + '_send').on('click', async function () {
 		if (busy || !queue.length) { return; }
 		if (Date.now() - planTime > PLAN_TTL) {
