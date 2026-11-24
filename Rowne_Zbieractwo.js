@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v1.0.4
+ * Równe Zbieractwo v1.0.6
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -28,7 +28,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.4';
+	const VERSION = 'v1.0.6';
 	const NS = 'RowneZbieractwo';
 	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
@@ -297,11 +297,11 @@
 		const update = () => {
 			const s = readPanel();
 			storageSet('settings', s);
-			// ostrzeżenie: zaznaczone jednostki bez rezerwy wyjadą z każdej wioski grupy, także z obrony
+			// ostrzeżenie: zaznaczone jednostki bez rezerwy wyjadą w całości z każdej wioski grupy, także z wiosek atakowanych
 			const noReserve = units.filter(u => s.units[u] && !s.reserve[u]).map(u => UNIT_NAMES[u]);
 			$('#' + NS + '_warn').html(noReserve.length
-				? `Uwaga: bez rezerwy (${noReserve.join(', ')}) – skrypt wyśle te jednostki w całości z każdej wioski grupy, także z obrony. ` +
-				'Wpisz „Zostaw w wiosce” albo wybierz grupę bez wiosek obronnych.'
+				? `Uwaga: bez rezerwy (${noReserve.join(', ')}) – skrypt wyśle wszystkie własne jednostki tego typu z każdej wioski grupy, także z wiosek atakowanych. ` +
+				'Wpisz „Zostaw w wiosce” albo wybierz grupę bez atakowanych wiosek.'
 				: '');
 		};
 		$('#' + NS).on('input change', 'input', update);
