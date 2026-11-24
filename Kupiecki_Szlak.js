@@ -10,7 +10,7 @@
  */
 
 /*
- * Kupiecki Szlak v3.2.1
+ * Kupiecki Szlak v3.2.2
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -46,7 +46,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.2.1';
+	const VERSION = 'v3.2.2';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -569,7 +569,7 @@
 					<td>${resInputs('fillTo', settings.fillTo)}
 					<input type="button" class="btn" id="${NS}_fillAvg" value="wstaw średnią">
 					<input type="button" class="btn" id="${NS}_fillMax" value="do pełna">
-					<small id="${NS}_fillAvgInfo"></small>
+					<div id="${NS}_fillAvgInfo" style="font-size:11px;font-weight:bold"></div>
 					<br><small>średnio na wioskę masz: ${avg.map(fmt).join(' / ')}; „do pełna” = największy spichlerz (${fmt(Math.max(...caps))}), a „Maks. zapełnienie” i tak pilnuje, żeby się nie przelało</small></td></tr>
 				<tr><td>Gdy zabraknie surowców,<br>najpierw każdemu po</td>
 					<td>${resInputs('priorityLevel', settings.priorityLevel)}
