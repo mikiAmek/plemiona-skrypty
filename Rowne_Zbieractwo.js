@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.1.0';
+	const VERSION = 'v2.2.0';
 	const NS = 'RowneZbieractwo';
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
@@ -155,10 +155,6 @@
 		const base = seconds / opt.duration_factor - opt.duration_initial_seconds;
 		return base > 0 ? Math.sqrt(Math.pow(base, 1 / opt.duration_exponent) / 100) : 0;
 	};
-	const median = arr => {
-		const a = arr.slice().sort((x, y) => x - y);
-		return a.length ? a[Math.floor((a.length - 1) / 2)] : 0;
-	};
 
 	// Plan: wspólny zestaw na każdy poziom (te same liczby dla wszystkich wiosek – tak działa formularz gry).
 	// Każdy poziom dostaje tę samą mieszankę w proporcji 1/łup poziomu, więc wszystkie oddziały wracają razem.
@@ -178,29 +174,30 @@
 			return { v, avail, free };
 		});
 		const active = villages.filter(x => x.free.length && unitIds.some(u => x.avail[u] > 0));
-		if (!active.length) { throw 'Na tej stronie żadna wioska nie ma wolnego poziomu i wojsk do wysłania.'; }
+		if (!active.length) { throw 'W tej grupie żadna wioska nie ma wolnego poziomu i wojsk do wysłania.'; }
 
-		// Mieszanka: typowa (mediana) liczba każdej jednostki w wioskach, które mają co wysłać
-		const mix = {};
-		for (const u of unitIds) { mix[u] = median(active.map(x => x.avail[u])); }
-		const usedUnits = unitIds.filter(u => mix[u] > 0);
-		const droppedUnits = unitIds.filter(u => !mix[u]);
-		if (!usedUnits.length) { throw 'Większość wiosek nie ma zaznaczonych jednostek.'; }
+		const carryOf = (t, units) => units.reduce((a, u) => a + (t[u] || 0) * data.units[u].carry, 0);
+		const popOf = (t, units) => units.reduce((a, u) => a + (t[u] || 0) * data.units[u].pop, 0);
 
-		const invSum = levels.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
-		const share = id => (1 / data.options[id].loot_factor) / invSum;
+		// Kandydaci na mieszankę: percentyle liczby jednostek w wioskach (od słabszych do najsilniejszej).
+		// Mediana bywa za mała, gdy wiosek jest mało albo są bardzo różne – wybór robi symulacja.
+		const pct = (arr, q) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(q * (a.length - 1) + 0.5))]; };
+		const mixes = [];
+		for (const q of [0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+			const m = {};
+			for (const u of unitIds) { m[u] = pct(active.map(x => x.avail[u]), q); }
+			const key = unitIds.map(u => m[u]).join(',');
+			if (unitIds.some(u => m[u] > 0) && !mixes.some(x => x.key === key)) { mixes.push({ m, key }); }
+		}
 
-		// Zestaw dla skali s (s = 1 → typowa wioska wysyła całe swoje zaznaczone wojsko)
-		const templatesFor = s => levels.map(id => {
-			const t = {};
-			for (const u of usedUnits) { t[u] = Math.floor(mix[u] * s * share(id)); }
-			return { optionId: id, units: t };
-		});
-		const carryOf = t => usedUnits.reduce((a, u) => a + (t[u] || 0) * data.units[u].carry, 0);
-		const popOf = t => usedUnits.reduce((a, u) => a + (t[u] || 0) * data.units[u].pop, 0);
+		// Kandydaci na poziomy: każdy niepusty podzbiór zaznaczonych (przy małych wojskach lepiej pominąć któryś poziom)
+		// tylko poziomy odblokowane i wolne w co najmniej jednej wiosce, która ma co wysłać
+		const usable = levels.filter(id => active.some(x => x.free.includes(id)));
+		const subsets = [];
+		for (let mask = 1; mask < (1 << usable.length); mask++) { subsets.push(usable.filter((_, i) => mask & (1 << i))); }
 
 		// Symulacja tego, co zrobi gra: poziom po poziomie, wioska wysyła zestaw, jeśli ma go w całości
-		const simulate = templates => {
+		const simulate = (templates, units) => {
 			let loot = 0;
 			const counts = templates.map(() => 0);
 			for (const x of active) {
@@ -208,42 +205,67 @@
 				const cf = x.v.unit_carry_factor || 1;
 				templates.forEach((tp, i) => {
 					if (!x.free.includes(tp.optionId)) { return; }
-					if (usedUnits.some(u => rest[u] < tp.units[u])) { return; }
-					usedUnits.forEach(u => { rest[u] -= tp.units[u]; });
+					if (units.some(u => rest[u] < tp.units[u])) { return; }
+					units.forEach(u => { rest[u] -= tp.units[u]; });
 					counts[i]++;
-					loot += carryOf(tp.units) * cf * data.options[tp.optionId].loot_factor;
+					loot += carryOf(tp.units, units) * cf * data.options[tp.optionId].loot_factor;
 				});
 			}
 			const opt = data.options[templates[0].optionId];
-			const seconds = duration(opt, carryOf(templates[0].units) * opt.loot_factor);
+			const seconds = duration(opt, carryOf(templates[0].units, units) * opt.loot_factor);
 			return { loot, counts, seconds };
 		};
-		const valid = templates => templates.every(tp => popOf(tp.units) >= MIN_POP);
 
 		let best = null;
-		if (settings.mode === 'time') {
-			// skala, przy której łup każdego poziomu daje zadany czas powrotu
-			const opt = data.options[levels[0]];
-			const haul = haulForDuration(opt, settings.hours * 3600);
-			if (haul <= 0) { throw 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(duration(opt, 0)) + '.'; }
-			const mixCarry = usedUnits.reduce((a, u) => a + mix[u] * data.units[u].carry, 0);
-			const s = haul / (opt.loot_factor * share(levels[0]) * mixCarry);
-			const templates = templatesFor(s);
-			if (!valid(templates)) { throw 'Przy tym czasie zestaw na któryś poziom ma mniej niż 10 populacji – wydłuż czas albo odznacz poziom 1.'; }
-			best = { s, templates, ...simulate(templates) };
-		} else {
-			// najwięcej łupu na godzinę dla całej strony: przeszukanie skali od małych do dużych zestawów
-			for (let k = 0; k <= 200; k++) {
-				const s = 0.05 * Math.pow(60, k / 200); // 0,05 … 3
-				const templates = templatesFor(s);
-				if (!valid(templates)) { continue; }
-				const r = simulate(templates);
-				const perHour = r.loot / (r.seconds / 3600);
-				if (!best || perHour > best.perHour) { best = { s, templates, perHour, ...r }; }
+		let timeTooShort = false;
+		for (const lv of subsets) {
+			const invSum = lv.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
+			const share = id => (1 / data.options[id].loot_factor) / invSum;
+			for (const { m } of mixes) {
+				const units = unitIds.filter(u => m[u] > 0);
+				// Zestaw dla skali s (s = 1 → wioska z tą mieszanką wysyła wszystkie zaznaczone jednostki)
+				const templatesFor = s => lv.map(id => {
+					const t = {};
+					for (const u of units) { t[u] = Math.floor(m[u] * s * share(id)); }
+					return { optionId: id, units: t };
+				});
+				const valid = tps => tps.every(tp => popOf(tp.units, units) >= MIN_POP);
+				const consider = (s, tps) => {
+					const r = simulate(tps, units);
+					if (!r.loot) { return; }
+					const perHour = r.loot / (r.seconds / 3600);
+					const score = settings.mode === 'time' ? r.loot : perHour;
+					if (!best || score > best.score) { best = { s, templates: tps, perHour, score, usedUnits: units, ...r }; }
+				};
+				if (settings.mode === 'time') {
+					const opt = data.options[lv[0]];
+					const haul = haulForDuration(opt, settings.hours * 3600);
+					if (haul <= 0) { timeTooShort = fmtTime(duration(opt, 0)); continue; }
+					const s = haul / (opt.loot_factor * share(lv[0]) * carryOf(m, units));
+					const tps = templatesFor(s);
+					if (valid(tps)) { consider(s, tps); }
+				} else {
+					for (let k = 0; k <= 120; k++) {
+						const s = 0.05 * Math.pow(20, k / 120); // 0,05 … 1
+						const tps = templatesFor(s);
+						if (valid(tps)) { consider(s, tps); }
+					}
+				}
 			}
-			if (!best) { throw 'Za mało wojsk – zestaw na każdy poziom musi mieć min. 10 populacji (spróbuj odznaczyć poziom 1).'; }
 		}
-		return { ...best, usedUnits, droppedUnits, villageCount: active.length, pages: data.pages || 1 };
+		if (!best) {
+			if (timeTooShort) { throw 'Zadany czas jest za krótki – minimum to ok. ' + timeTooShort + '.'; }
+			throw settings.mode === 'time'
+				? 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.'
+				: 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.';
+		}
+		// poziomy, na które żadna wioska nie wyśle, wypadają z planu (pozostałe i tak wracają razem)
+		const keep = best.counts.map(c => c > 0);
+		best.templates = best.templates.filter((_, i) => keep[i]);
+		best.counts = best.counts.filter((_, i) => keep[i]);
+		const usedUnits = best.usedUnits;
+		const droppedUnits = unitIds.filter(u => !usedUnits.includes(u));
+		return { ...best, usedUnits, droppedUnits, skippedLevels: levels.filter(id => !best.templates.some(t => t.optionId === id)), villageCount: active.length, pages: data.pages || 1 };
 	}
 
 	// ---------- Formularz gry ----------
@@ -356,7 +378,7 @@
 				${unitRows}
 				<tr><th colspan="3">Poziomy i czas</th></tr>
 				<tr><td>Poziomy</td><td colspan="2"><div style="white-space:nowrap">${levelBoxes}</div>
-					<small>oddział musi mieć min. 10 populacji – przy małych zestawach odznacz poziom 1</small></td></tr>
+					<small>oddział musi mieć min. 10 populacji – przy małej liczbie wojsk skrypt sam pominie poziomy, które się nie opłacają</small></td></tr>
 				<tr><td>Tryb</td><td colspan="2">
 					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Najwięcej łupu na godzinę</b> – skrypt sam dobiera wielkość zestawu</label><br>
 					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
@@ -386,7 +408,7 @@
 		$('#' + NS + '_plan').html(`
 			<p>Wszystkie oddziały wrócą po ok. <b>${fmtTime(plan.seconds)}</b>. Łup: <b>${fmt(plan.loot)}</b> surowców
 			(${plan.pages > 1 ? 'wszystkie strony: ' + plan.pages : '1 strona'}).
-			${plan.droppedUnits.length ? `<br><small>Pominięte (większość wiosek ich nie ma): ${plan.droppedUnits.map(u => UNIT_NAMES[u]).join(', ')}.</small>` : ''}</p>
+			${plan.droppedUnits.length ? `<br><small>Pominięte jednostki (za mało ich w wioskach): ${plan.droppedUnits.map(u => UNIT_NAMES[u]).join(', ')}.</small>` : ''}${plan.skippedLevels && plan.skippedLevels.length ? `<br><small>Pominięte poziomy (za mało wojsk albo mniej łupu): ${plan.skippedLevels.join(', ')}.</small>` : ''}</p>
 			<table class="vis" style="width:100%">
 				<tr><th>Poziom</th><th>Zestaw (każda wioska)</th><th>Wiosek wyśle</th></tr>${rows}
 			</table>
