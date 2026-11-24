@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.2.0';
+	const VERSION = 'v2.2.1';
 	const NS = 'RowneZbieractwo';
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
@@ -459,7 +459,12 @@
 
 		renderPanel(loadSettings());
 		let busy = false;
-		const existing = loadPlan();
+		let existing = loadPlan();
+		// zakończony plan z poprzedniego użycia – usuwamy po cichu, bez komunikatu „gotowe”
+		if (existing && existing.step.idx >= existing.templates.length && existing.step.page + 1 >= existing.pages) {
+			storageRemove('plan2');
+			existing = null;
+		}
 		if (existing) {
 			renderPlan(existing);
 			nextStep().catch(ex => notify(NAME + ': ' + ex)); // np. po przejściu na następną stronę
