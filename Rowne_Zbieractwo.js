@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.2.2';
+	const VERSION = 'v2.3.0';
 	const NS = 'RowneZbieractwo';
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
@@ -424,7 +424,7 @@
 
 	function renderProgress(plan) {
 		const el = $('#' + NS + '_progress');
-		if (!plan) { el.html('<b>Gotowe.</b>'); $('#' + NS + '_next').addClass('btn-disabled'); return; }
+		if (!plan) { el.html('<b>Gotowe.</b>'); $(`#${NS}_next, #${NS}_next2`).addClass('btn-disabled'); return; }
 		const { page, idx } = plan.step;
 		const what = idx < plan.templates.length
 			? `wypełnienie poziomu ${plan.templates[idx].optionId}`
@@ -492,7 +492,12 @@
 			}
 		});
 
-		$('#' + NS).on('click', `#${NS}_next`, async () => {
+		// drugi przycisk „Następny krok” tuż pod „Wyślij” gry – po wysłaniu nie trzeba wracać do skrótu na górze
+		const sendRow = $('#scavenge_mass_screen .send-row').first();
+		if (sendRow.length && !$('#' + NS + '_next2').length) {
+			sendRow.after(`<div style="margin:6px 0;text-align:right"><input type="button" class="btn" id="${NS}_next2" value="Równe Zbieractwo: następny krok"></div>`);
+		}
+		$(document).on('click', `#${NS}_next, #${NS}_next2`, async () => {
 			if (busy) { return; }
 			busy = true;
 			try { await nextStep(); }
