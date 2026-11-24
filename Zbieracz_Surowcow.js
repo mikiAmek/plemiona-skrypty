@@ -1,5 +1,5 @@
 /*
- * Zbieracz Surowców v2.8.4
+ * Zbieracz Surowców v2.8.5
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -34,7 +34,7 @@
 	}
 
 	const NAME = 'Zbieracz Surowców';
-	const VERSION = 'v2.8.4';
+	const VERSION = 'v2.8.5';
 	const NS = 'Zbieracz_Surowcow';
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -713,8 +713,13 @@
 			}
 		});
 
+		// Kursor na przycisku gry – Enter wysyła wezwanie (jedno naciśnięcie = jedna akcja, jak w Dysponencie)
+		const submit = $('form[name=call-resources] .btn').first();
+		submit.css({ outline: '3px solid #ffd700', 'outline-offset': '2px' });
+		if (submit[0]) { submit[0].focus(); }
+
 		const left = plan.summons.length - 1;
-		let msg = `${NAME}: wypełniono ${filled} wiosek. Sprawdź i kliknij „Poproś o surowce”.`;
+		let msg = `${NAME}: wypełniono ${filled} wiosek. Sprawdź i naciśnij Enter (albo kliknij „Poproś o surowce”).`;
 		msg += left ? ` Potem kliknij skrypt – wczyta i wypełni następne wezwanie (zostało: ${left}).` : ' To ostatnie wezwanie z planu.';
 		if (missing.length) {
 			msg += `<br><b>Brak na liście ${missing.length} wiosek wysyłających</b> – wybierz grupę [wszystkie] ` +
