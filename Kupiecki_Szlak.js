@@ -10,7 +10,7 @@
  */
 
 /*
- * Kupiecki Szlak v3.3.0
+ * Kupiecki Szlak v3.3.1
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -26,18 +26,17 @@
  * Skrypt nigdy sam nie wysyła wezwań (1 kliknięcie = 1 akcja).
  * Plan jest ważny 30 minut.
  *
- * Sygnatura:
- * javascript:$.getScript('ADRES_SKRYPTU');void(0);
- *
- * Ustawienia z panelu są zapamiętywane w przeglądarce od razu, osobno dla każdego konta.
+ * Ustawienia z panelu są zapamiętywane w przeglądarce (localStorage) od razu,
+ * osobno dla każdego konta i zastępstwa. Skrypt nie używa ciasteczek
+ * i nie łączy się z żadnymi stronami poza serwerem gry.
  */
 
 (async function () {
 	'use strict';
 
 	// Komunikat działający zawsze – także gdy strona gry nie ma okienek UI (np. wersja mobilna)
-	const notify = (msg, type) => {
-		if (typeof UI !== 'undefined' && UI[type || 'ErrorMessage']) { UI[type || 'ErrorMessage'](msg, 8000); }
+	const notify = (msg, type, ms) => {
+		if (typeof UI !== 'undefined' && UI[type || 'ErrorMessage']) { UI[type || 'ErrorMessage'](msg, ms || 8000); }
 		else { alert(String(msg).replace(/<br>/g, '\n').replace(/<[^>]+>/g, '')); }
 	};
 	if (typeof game_data === 'undefined' || typeof jQuery === 'undefined') {
@@ -46,7 +45,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.3.0';
+	const VERSION = 'v3.3.1';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -124,9 +123,15 @@
 
 	// ---------- Dane wiosek (Przeglądy > Produkcja) ----------
 
+	// Przeglądy i ekran Wezwij mogą wymagać Konta Premium – podpowiedź tylko, gdy Premium jest nieaktywne
+	function premiumHint() {
+		const p = game_data.features && game_data.features.Premium;
+		return (p && p.possible && !p.active) ? ' Ten widok wymaga Konta Premium.' : '';
+	}
+
 	function parseProduction(html, allowEmpty) {
 		const table = $('<div>').append($.parseHTML(html)).find('#production_table')[0] || $('#production_table')[0];
-		if (!table) { throw 'Nie znaleziono tabeli przeglądu produkcji.'; }
+		if (!table) { throw 'Nie znaleziono tabeli przeglądu produkcji.' + premiumHint(); }
 
 		const villages = [];
 		for (let i = 1; i < table.rows.length; i++) {
@@ -663,7 +668,7 @@
 
 		$('#' + NS + '_execute').on('click', () => {
 			const plan = planReady ? loadPlan() : null;
-			if (!plan) { UI.ErrorMessage(planExpired ? noPlanMessage() : NAME + ': najpierw opracuj plan.', 5000); return; }
+			if (!plan) { notify(planExpired ? noPlanMessage() : NAME + ': najpierw opracuj plan.'); return; }
 			location.href = callUrl(plan);
 		});
 	}
@@ -880,8 +885,6 @@
 		});
 	}
 
-	// Wczytuje formularz Wezwij następnej wioski docelowej w miejsce bieżącego (bez przeładowania strony),
-	// dzięki czemu jedno kliknięcie skryptu = przejście + wypełnienie.
 	// Wioska, do której wyśle formularz Wezwij widoczny na stronie (z adresu formularza)
 	function formVillage() {
 		const form = $('form[name="call-resources"]')[0];
@@ -891,11 +894,13 @@
 		} catch (e) { return null; }
 	}
 
+	// Wczytuje formularz Wezwij następnej wioski docelowej w miejsce bieżącego (bez przeładowania strony).
+	// Tylko odczyt (GET) i wypełnienie pól – wezwanie wysyła gracz własnym kliknięciem/Enterem.
 	async function loadCallFormFor(plan) {
 		const html = await $.get(callUrl(plan));
 		const doc = $('<div>').append($.parseHTML(html)); // bez wykonywania skryptów strony
 		const newForm = doc.find('form[name="call-resources"]')[0];
-		if (!newForm) { throw 'Nie udało się wczytać ekranu Wezwij wioski docelowej.'; }
+		if (!newForm) { throw 'Nie udało się wczytać ekranu Wezwij wioski docelowej.' + premiumHint(); }
 
 		const oldForm = $('form[name="call-resources"]')[0];
 		if (!oldForm) { throw 'Nie znaleziono formularza Wezwij na tej stronie.'; }
@@ -957,7 +962,7 @@
 			}
 		});
 
-		// Kursor na przycisku gry – Enter wysyła wezwanie (jedno naciśnięcie = jedna akcja, jak w Dysponencie)
+		// Kursor na przycisku gry – Enter wysyła wezwanie (jedno naciśnięcie = jedna akcja gracza)
 		const submit = $('form[name=call-resources] .btn').first();
 		if (submit[0]) { submit[0].focus(); }
 
@@ -968,7 +973,7 @@
 			msg += `<br><b>Brak na liście ${missing.length} wiosek wysyłających</b> – wybierz grupę [wszystkie] ` +
 				'i ustaw „Liczba wiosek na stronie” co najmniej na liczbę swoich wiosek.';
 		}
-		UI.SuccessMessage(msg, 8000);
+		notify(msg, 'SuccessMessage');
 	}
 
 	// ---------- Start ----------
@@ -982,7 +987,7 @@
 
 		if (isProd) {
 			if ($('#' + NS).length) { $('#' + NS).remove(); return; } // drugie kliknięcie chowa panel
-			notify(NAME + ': wczytywanie wiosek…', 'InfoMessage');
+			notify(NAME + ': wczytywanie wiosek…', 'InfoMessage', 1500);
 			if (!$('#content_value').length) { throw 'Nie znaleziono treści strony – włącz wersję gry na komputer.'; }
 			const settings = loadSettings();
 			const villages = await fetchVillages();
@@ -993,7 +998,7 @@
 		if (isCall) {
 			const plan = loadPlan();
 			if (!plan) {
-				UI.ErrorMessage(noPlanMessage(), 6000);
+				notify(noPlanMessage());
 				return;
 			}
 			await executeOnCallScreen(plan);
