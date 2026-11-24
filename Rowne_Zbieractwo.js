@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.0
+ * Równe Zbieractwo v2.6.1
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.0';
+	const VERSION = 'v2.6.1';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -50,7 +50,7 @@
 		reserve: { spear: 0, sword: 0, axe: 0, archer: 0, light: 0, marcher: 0, heavy: 0, knight: 0 },
 		levels: [true, true, true, true],
 		mode: 'best',      // 'best' – Optymalnie (najwięcej łupu na godzinę); 'time' – Wróć po; 'fill' – Uzupełnij
-		hours: 2,
+		hours: 95 / 60,    // Wróć po: 1:35
 		rangeMin: 1,       // Optymalnie: zakres czasu powrotu w godzinach, 0 = bez ograniczenia
 		rangeMax: 3,
 		tolMin: 3          // uzupełnianie: o ile minut później niż już wysłane może wrócić nowy oddział
@@ -94,7 +94,7 @@
 		}
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
 		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
-		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
+		if (Number.isFinite(saved.hours) && saved.hours >= 5 / 60) { s.hours = saved.hours; } // krótsze = pozostałość starego formatu
 		for (const k of ['rangeMin', 'rangeMax']) { if (Number.isFinite(saved[k]) && saved[k] >= 0) { s[k] = saved[k]; } }
 		if (Number.isFinite(saved.tolMin) && saved.tolMin >= 0) { s.tolMin = saved.tolMin; }
 		return s;
@@ -491,20 +491,21 @@
 				<tr><td>Poziomy</td><td colspan="2"><div style="white-space:nowrap">${levelBoxes}</div>
 					<small>oddział musi mieć min. 10 populacji – przy małej liczbie wojsk skrypt sam pominie poziomy, które się nie opłacają</small></td></tr>
 				<tr><td style="vertical-align:top">Tryb</td><td colspan="2">
-					<table style="border-collapse:collapse">
-						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
-								<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label>
-								<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:40px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:40px"></td>
-							<td style="padding:3px 0"><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę) w zakresie od–do; puste pole = bez ograniczenia</small></td></tr>
-						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
-								<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
-								<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" placeholder="g:mm" style="width:45px"></td>
-							<td style="padding:3px 0"><small>wszystkie oddziały wracają po zadanym czasie</small></td></tr>
-						<tr><td style="padding:3px 8px 3px 0;white-space:nowrap;vertical-align:top">
-								<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij</b></label>
-								+<input type="text" id="${NS}_tol" value="${settings.tolMin}" style="width:30px"> min</td>
-							<td style="padding:3px 0"><small>wypełnia wolne poziomy tak, żeby nowe oddziały wróciły razem z już wysłanymi – najwyżej o tyle minut później (0 = nie później)</small></td></tr>
-					</table></td></tr>
+					<div style="margin:2px 0 8px 0">
+						<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label>
+						<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:45px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:45px">
+						<br><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę) w zakresie od–do; puste pole = bez ograniczenia</small>
+					</div>
+					<div style="margin:0 0 8px 0">
+						<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
+						<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" placeholder="g:mm" style="width:45px">
+						<br><small>wszystkie oddziały wracają po zadanym czasie, np. 1:35</small>
+					</div>
+					<div style="margin:0">
+						<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij</b></label>
+						+<input type="text" id="${NS}_tol" value="${settings.tolMin}" style="width:35px"> min
+						<br><small>wypełnia wolne poziomy tak, żeby nowe oddziały wróciły razem z już wysłanymi – najwyżej o tyle minut później (0 = nie później)</small>
+					</div></td></tr>
 			</table>
 			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
 			<div style="margin-top:8px"><input type="button" class="btn" id="${NS}_calc" value="Oblicz zestaw"></div>
