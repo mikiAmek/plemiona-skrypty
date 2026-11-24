@@ -1,21 +1,23 @@
 /*
- * Równe Zbieractwo v1.0.9
+ * Równe Zbieractwo v2.1.0
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
  * (Uruchomiony na innym ekranie – przenosi do Zbieractwa masowego.)
  *
- * „Oblicz plan” – skrypt czyta wioski z aktywnej grupy (wszystkie strony listy) i dla KAŻDEJ wioski
- * osobno dzieli wybrane jednostki na wolne poziomy zbieractwa tak, żeby wszystkie oddziały
- * wróciły w tym samym czasie (albo po zadanym czasie). Nic nie wysyła.
- * „Wyślij partię” – jedno kliknięcie wysyła jedną partię (do 50 wiosek), tak jak przycisk „Wyślij” gry.
+ * Zaznaczasz jednostki, a skrypt sam dobiera wspólny zestaw wojsk dla wiosek z aktywnej grupy (wszystkie strony)
+ * i dzieli go na poziomy tak, żeby wszystkie oddziały wróciły o tej samej godzinie.
+ * Każde kliknięcie skrótu (albo „Następny krok”) = jedna akcja: wpisuje zestaw kolejnego poziomu w formularz gry
+ * i zaznacza jego kolumnę (gra sama zaznacza tylko wioski, które mają tyle wojsk) albo przechodzi na następną stronę.
+ * Wysyłasz SAM przyciskiem „Wyślij” gry.
  *
- * Nigdy nie używa płatnego bonusu +20% (punkty premium).
+ * Skrypt niczego nie wysyła, nie klika i nie ustawia kursora na przycisku „Wyślij”.
+ * Wymaga Konta Premium (Zbieractwo masowe to funkcja premium).
  * Ustawienia z panelu są zapamiętywane w przeglądarce (localStorage), osobno dla każdego konta.
  * Skrypt nie używa ciasteczek i nie łączy się z żadnymi stronami poza serwerem gry.
  */
 
-(async function () {
+(function () {
 	'use strict';
 
 	const notify = (msg, type, ms) => {
@@ -28,11 +30,10 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.9';
+	const VERSION = 'v2.1.0';
 	const NS = 'RowneZbieractwo';
-	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
-	const PLAN_TTL = 10 * 60 * 1000;    // plan starszy niż 10 min trzeba przeliczyć (wojska mogły się zmienić)
+	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
 	const SCAV_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'knight'];
 	const UNIT_NAMES = {
 		spear: 'Pikinier', sword: 'Miecznik', axe: 'Topornik', archer: 'Łucznik',
@@ -43,14 +44,13 @@
 		units: { spear: false, sword: false, axe: false, archer: false, light: true, marcher: false, heavy: false, knight: false },
 		reserve: { spear: 0, sword: 0, axe: 0, archer: 0, light: 0, marcher: 0, heavy: 0, knight: 0 },
 		levels: [true, true, true, true],
-		mode: 'equal',     // 'equal' – wszystkie dostępne wojska, równy powrót; 'time' – tylko tyle, ile trzeba na zadany czas
-		hours: 1
+		mode: 'best',      // 'best' – najwięcej łupu na godzinę; 'time' – powrót po zadanym czasie
+		hours: 2
 	};
 
 	// ---------- Pomocnicze ----------
 
 	const fmt = n => Math.round(n).toLocaleString('pl-PL');
-	const esc = t => $('<div>').text(t).html();
 	const fmtTime = s => {
 		s = Math.round(s);
 		return Math.floor(s / 3600) + ':' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
@@ -65,21 +65,24 @@
 	function storageSet(key, value) {
 		try { localStorage.setItem(storageKey(key), JSON.stringify(value)); } catch (e) { /* brak dostępu */ }
 	}
+	function storageRemove(key) {
+		try { localStorage.removeItem(storageKey(key)); } catch (e) { /* brak dostępu */ }
+	}
 
 	function loadSettings() {
 		const s = JSON.parse(JSON.stringify(DEFAULTS));
-		const saved = storageGet('settings') || {};
+		const saved = storageGet('settings2') || {};
 		for (const u of SCAV_UNITS) {
 			if (saved.units && typeof saved.units[u] === 'boolean') { s.units[u] = saved.units[u]; }
 			if (saved.reserve && Number.isFinite(saved.reserve[u])) { s.reserve[u] = Math.max(0, saved.reserve[u]); }
 		}
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
-		if (saved.mode === 'time' || saved.mode === 'equal') { s.mode = saved.mode; }
+		if (saved.mode === 'time' || saved.mode === 'best') { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
 		return s;
 	}
 
-	// ---------- Dane z gry ----------
+	// ---------- Dane z gry (tylko odczyt) ----------
 
 	// Odczytuje jedną wartość JSON (obiekt, tablicę lub liczbę) z tekstu, zaczynając od pozycji i.
 	function readJsonValue(text, i) {
@@ -103,141 +106,214 @@
 		return { value: Number(m[0]), end: i + m[0].length };
 	}
 
-	// Strona Zbieractwa masowego przekazuje dane do gry jako argumenty new ScavengeMassScreen(opcje, jednostki, liczba, wioski, ...)
+	// Strona przekazuje dane do gry jako argumenty new ScavengeMassScreen(poziomy, jednostki, liczba, wioski, ...)
 	function parseMassPage(html) {
 		const at = html.indexOf('new ScavengeMassScreen(');
-		if (at === -1) {
-			const premium = game_data.features && game_data.features.Premium;
-			throw 'Nie znaleziono danych Zbieractwa masowego.' + (premium && !premium.active ? ' Ten widok wymaga Konta Premium.' : '');
-		}
+		if (at === -1) { throw 'Nie znaleziono danych Zbieractwa masowego.'; }
 		let pos = at + 'new ScavengeMassScreen('.length;
 		const options = readJsonValue(html, pos); pos = options.end;
 		const units = readJsonValue(html, pos); pos = units.end;
 		const third = readJsonValue(html, pos); pos = third.end;
 		const villages = readJsonValue(html, pos);
 		if (!Array.isArray(villages.value)) { throw 'Nieoczekiwany format listy wiosek zbieractwa.'; }
-		return {
-			options: options.value,
-			units: units.value,
-			villages: villages.value,
-			hasNext: /rel="next"/.test(html)
-		};
+		return { options: options.value, units: units.value, villages: villages.value };
 	}
 
-	// Pobiera wszystkie strony listy (aktywna grupa, jak na ekranie gry) – tylko odczyt
-	async function fetchAll() {
+	const currentPage = () => Number((/[?&]page=(\d+)/.exec(location.href) || [])[1] || 0);
+	const pageUrl = page => '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass&page=' + page + sitterParam();
+
+	// Aktualne wojska wszystkich wiosek aktywnej grupy – wszystkie strony listy (tylko odczyt)
+	async function fetchAllPages() {
 		let options = null;
 		let units = null;
 		const villages = [];
 		const seen = new Set();
+		let pages = 0;
 		for (let page = 0; page < 40; page++) {
-			const html = await $.get('/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass&page=' + page + sitterParam());
+			const html = await $.get(pageUrl(page));
 			const data = parseMassPage(html);
 			options = options || data.options;
 			units = units || data.units;
 			// strona bez nowych wiosek = koniec listy (zabezpieczenie przed czytaniem w kółko tej samej strony)
 			const fresh = data.villages.filter(v => !seen.has(v.village_id));
-			fresh.forEach(v => seen.add(v.village_id));
+			if (!fresh.length) { break; }
+			fresh.forEach(v => { seen.add(v.village_id); v._page = page; });
 			villages.push(...fresh);
-			if (!data.hasNext || !fresh.length) { break; }
+			pages = page + 1;
+			if (!/rel="next"/.test(html)) { break; }
 		}
-		return { options, units, villages };
+		return { options, units, villages, pages };
 	}
 
 	// ---------- Obliczenia ----------
 
-	// Czas zbieractwa (s) dla łupu `haul` – ten sam wzór, którego używa gra (parametry z danych poziomu)
+	// Czas zbieractwa (s) dla łupu `haul` – wzór gry, parametry z danych poziomu
 	const duration = (opt, haul) =>
 		(Math.pow(haul * haul * 100, opt.duration_exponent) + opt.duration_initial_seconds) * opt.duration_factor;
-
-	// Łup, przy którym zbieractwo trwa dokładnie `seconds` (odwrotność wzoru powyżej)
+	// Łup, przy którym zbieractwo trwa dokładnie `seconds`
 	const haulForDuration = (opt, seconds) => {
 		const base = seconds / opt.duration_factor - opt.duration_initial_seconds;
 		return base > 0 ? Math.sqrt(Math.pow(base, 1 / opt.duration_exponent) / 100) : 0;
 	};
+	const median = arr => {
+		const a = arr.slice().sort((x, y) => x - y);
+		return a.length ? a[Math.floor((a.length - 1) / 2)] : 0;
+	};
 
-	// Plan dla jednej wioski: lista oddziałów { optionId, counts, carry, haul, seconds }
-	function planVillage(village, data, settings) {
-		const cf = village.unit_carry_factor || 1;
+	// Plan: wspólny zestaw na każdy poziom (te same liczby dla wszystkich wiosek – tak działa formularz gry).
+	// Każdy poziom dostaje tę samą mieszankę w proporcji 1/łup poziomu, więc wszystkie oddziały wracają razem.
+	function createPlan(data, settings) {
 		const unitIds = SCAV_UNITS.filter(u => settings.units[u] && data.units[u] && data.units[u].carry > 0);
-		const avail = {};
-		for (const u of unitIds) {
-			avail[u] = Math.max(0, (village.unit_counts_home[u] || 0) - (settings.reserve[u] || 0));
-		}
-		const carryOf = counts => Object.keys(counts).reduce((t, u) => t + counts[u] * data.units[u].carry * cf, 0);
-		const popOf = counts => Object.keys(counts).reduce((t, u) => t + counts[u] * data.units[u].pop, 0);
-		const totalCarry = carryOf(avail);
-		if (!village.has_rally_point || totalCarry <= 0) { return { squads: [], reason: totalCarry <= 0 ? 'brak wojsk' : 'brak placu' }; }
+		if (!unitIds.length) { throw 'Zaznacz co najmniej jedną jednostkę.'; }
+		const levels = [1, 2, 3, 4].filter(id => settings.levels[id - 1] && data.options[id]);
+		if (!levels.length) { throw 'Zaznacz co najmniej jeden poziom.'; }
 
-		// Wolne poziomy: wybrane w panelu, odblokowane i bez trwającego zbieractwa
-		let levels = Object.keys(data.options).map(Number).filter(id => {
-			const st = village.options[id];
-			return settings.levels[id - 1] && st && !st.is_locked && !st.unlock_time && !st.scavenging_squad;
-		}).sort((a, b) => data.options[a].loot_factor - data.options[b].loot_factor);
-		if (!levels.length) { return { squads: [], reason: 'brak wolnych poziomów' }; }
-
-		while (levels.length) {
-			// Równy powrót = równy łup na każdym poziomie, więc udźwig poziomu = łup / współczynnik łupu
-			const invSum = levels.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
-			const equalHaul = totalCarry / invSum;
-			const targets = levels.map(id => {
-				const opt = data.options[id];
-				const haul = settings.mode === 'time'
-					? Math.min(equalHaul, haulForDuration(opt, settings.hours * 3600))
-					: equalHaul;
-				return haul / opt.loot_factor;
+		const villages = data.villages.filter(v => v.has_rally_point).map(v => {
+			const avail = {};
+			for (const u of unitIds) { avail[u] = Math.max(0, (v.unit_counts_home[u] || 0) - (settings.reserve[u] || 0)); }
+			const free = levels.filter(id => {
+				const st = v.options[id];
+				return st && !st.is_locked && !st.unlock_time && !st.scavenging_squad;
 			});
-			const targetSum = targets.reduce((a, b) => a + b, 0);
-			const useAll = targetSum >= totalCarry - 1e-6;
+			return { v, avail, free };
+		});
+		const active = villages.filter(x => x.free.length && unitIds.some(u => x.avail[u] > 0));
+		if (!active.length) { throw 'Na tej stronie żadna wioska nie ma wolnego poziomu i wojsk do wysłania.'; }
 
-			// Każdy poziom dostaje tę samą mieszankę jednostek w proporcji do swojego udźwigu
-			const counts = levels.map(() => ({}));
-			for (const u of unitIds) {
-				levels.forEach((_, i) => { counts[i][u] = Math.floor(avail[u] * targets[i] / totalCarry); });
-				if (useAll) {
-					// resztę z zaokrągleń dokładamy tam, gdzie brakuje najwięcej udźwigu
-					let left = avail[u] - counts.reduce((t, c) => t + c[u], 0);
-					while (left > 0) {
-						let best = 0;
-						let bestGap = -Infinity;
-						levels.forEach((_, i) => {
-							const gap = targets[i] - carryOf(counts[i]);
-							if (gap > bestGap) { bestGap = gap; best = i; }
-						});
-						counts[best][u]++;
-						left--;
-					}
-				}
+		// Mieszanka: typowa (mediana) liczba każdej jednostki w wioskach, które mają co wysłać
+		const mix = {};
+		for (const u of unitIds) { mix[u] = median(active.map(x => x.avail[u])); }
+		const usedUnits = unitIds.filter(u => mix[u] > 0);
+		const droppedUnits = unitIds.filter(u => !mix[u]);
+		if (!usedUnits.length) { throw 'Większość wiosek nie ma zaznaczonych jednostek.'; }
+
+		const invSum = levels.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
+		const share = id => (1 / data.options[id].loot_factor) / invSum;
+
+		// Zestaw dla skali s (s = 1 → typowa wioska wysyła całe swoje zaznaczone wojsko)
+		const templatesFor = s => levels.map(id => {
+			const t = {};
+			for (const u of usedUnits) { t[u] = Math.floor(mix[u] * s * share(id)); }
+			return { optionId: id, units: t };
+		});
+		const carryOf = t => usedUnits.reduce((a, u) => a + (t[u] || 0) * data.units[u].carry, 0);
+		const popOf = t => usedUnits.reduce((a, u) => a + (t[u] || 0) * data.units[u].pop, 0);
+
+		// Symulacja tego, co zrobi gra: poziom po poziomie, wioska wysyła zestaw, jeśli ma go w całości
+		const simulate = templates => {
+			let loot = 0;
+			const counts = templates.map(() => 0);
+			for (const x of active) {
+				const rest = Object.assign({}, x.avail);
+				const cf = x.v.unit_carry_factor || 1;
+				templates.forEach((tp, i) => {
+					if (!x.free.includes(tp.optionId)) { return; }
+					if (usedUnits.some(u => rest[u] < tp.units[u])) { return; }
+					usedUnits.forEach(u => { rest[u] -= tp.units[u]; });
+					counts[i]++;
+					loot += carryOf(tp.units) * cf * data.options[tp.optionId].loot_factor;
+				});
 			}
+			const opt = data.options[templates[0].optionId];
+			const seconds = duration(opt, carryOf(templates[0].units) * opt.loot_factor);
+			return { loot, counts, seconds };
+		};
+		const valid = templates => templates.every(tp => popOf(tp.units) >= MIN_POP);
 
-			// Gra przyjmuje oddział od MIN_POP populacji – jeśli któryś poziom nie dobija, odpada najsłabszy poziom
-			if (counts.some(c => popOf(c) < MIN_POP)) {
-				levels = levels.slice(1);
-				continue;
+		let best = null;
+		if (settings.mode === 'time') {
+			// skala, przy której łup każdego poziomu daje zadany czas powrotu
+			const opt = data.options[levels[0]];
+			const haul = haulForDuration(opt, settings.hours * 3600);
+			if (haul <= 0) { throw 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(duration(opt, 0)) + '.'; }
+			const mixCarry = usedUnits.reduce((a, u) => a + mix[u] * data.units[u].carry, 0);
+			const s = haul / (opt.loot_factor * share(levels[0]) * mixCarry);
+			const templates = templatesFor(s);
+			if (!valid(templates)) { throw 'Przy tym czasie zestaw na któryś poziom ma mniej niż 10 populacji – wydłuż czas albo odznacz poziom 1.'; }
+			best = { s, templates, ...simulate(templates) };
+		} else {
+			// najwięcej łupu na godzinę dla całej strony: przeszukanie skali od małych do dużych zestawów
+			for (let k = 0; k <= 200; k++) {
+				const s = 0.05 * Math.pow(60, k / 200); // 0,05 … 3
+				const templates = templatesFor(s);
+				if (!valid(templates)) { continue; }
+				const r = simulate(templates);
+				const perHour = r.loot / (r.seconds / 3600);
+				if (!best || perHour > best.perHour) { best = { s, templates, perHour, ...r }; }
 			}
-
-			const squads = levels.map((id, i) => {
-				const c = {};
-				for (const u of unitIds) { if (counts[i][u] > 0) { c[u] = counts[i][u]; } }
-				const carry = carryOf(c);
-				const haul = carry * data.options[id].loot_factor;
-				return { optionId: id, counts: c, carry, haul, seconds: duration(data.options[id], haul) };
-			});
-			return { squads, reason: '' };
+			if (!best) { throw 'Za mało wojsk – zestaw na każdy poziom musi mieć min. 10 populacji (spróbuj odznaczyć poziom 1).'; }
 		}
-		return { squads: [], reason: 'za mało wojsk (min. ' + MIN_POP + ' populacji na oddział)' };
+		return { ...best, usedUnits, droppedUnits, villageCount: active.length, pages: data.pages || 1 };
 	}
 
-	function createPlan(data, settings) {
-		if (!SCAV_UNITS.some(u => settings.units[u])) { throw 'Zaznacz co najmniej jedną jednostkę.'; }
-		if (!settings.levels.some(Boolean)) { throw 'Zaznacz co najmniej jeden poziom zbieractwa.'; }
-		if (settings.mode === 'time' && !(settings.hours > 0)) { throw 'Wpisz czas zbieractwa w godzinach.'; }
-		if (settings.mode === 'time') {
-			// najkrótsze możliwe zbieractwo (prawie pusty oddział) – krótszego czasu gra nie da
-			const shortest = Math.max(...Object.values(data.options).map(opt => duration(opt, 0)));
-			if (settings.hours * 3600 <= shortest) { throw 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(shortest) + '.'; }
+	// ---------- Formularz gry ----------
+
+	function setInput(input, value) {
+		$(input).val(value === '' ? '' : String(value));
+		['input', 'keyup', 'change'].forEach(ev => input.dispatchEvent(new Event(ev, { bubbles: true })));
+	}
+
+	// Wpisuje zestaw poziomu w wiersz wojsk gry i zaznacza kolumnę poziomu („Zaznacz wszystkie” gry).
+	// Wcześniej odznacza wszystko inne, żeby z tym zestawem nie poszedł inny poziom.
+	async function fillLevel(template) {
+		const screen = $('#scavenge_mass_screen');
+		const inputs = screen.find('.candidate-squad-widget input.unitsInput');
+		if (!inputs.length) { throw 'Nie znaleziono formularza Zbieractwa masowego na tej stronie.'; }
+		screen.find('.mass-scavenge-table input[type=checkbox]:checked').each(function () { $(this).trigger('click'); });
+		inputs.each(function () { setInput(this, template.units[this.name] ? template.units[this.name] : ''); });
+		// gra odblokowuje pola wyboru dopiero po przeliczeniu wpisanego zestawu – czekamy do 1,5 s
+		const colBox = () => screen.find(`.select-all-col[data-option="${template.optionId}"]`);
+		if (!colBox().length) { throw 'Nie znaleziono kolumny poziomu ' + template.optionId + '.'; }
+		for (let i = 0; i < 15 && colBox().prop('disabled'); i++) { await new Promise(r => setTimeout(r, 100)); }
+		if (colBox().prop('disabled')) { return 0; }
+		colBox().trigger('click');
+		return screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).length;
+	}
+
+	// Czy w kolumnie poziomu są jeszcze zaznaczone wioski (czyli nie kliknięto „Wyślij”)
+	const stillTicked = optionId =>
+		$(`#scavenge_mass_screen .mass-scavenge-table td.option-${optionId} input[type=checkbox]:checked`).length > 0;
+
+	// ---------- Kolejne kroki (1 kliknięcie = 1 akcja) ----------
+
+	function loadPlan() {
+		const plan = storageGet('plan2');
+		if (!plan || !plan.templates || Date.now() - plan.time > PLAN_TTL) { return null; }
+		return plan;
+	}
+
+	async function nextStep() {
+		const plan = loadPlan();
+		if (!plan) { notify(NAME + ': brak aktualnego planu – kliknij „Oblicz zestaw”.'); return; }
+		const step = plan.step;
+		if (currentPage() !== step.page) { location.href = pageUrl(step.page); return; }
+
+		// poprzedni poziom wypełniony, ale niewysłany – nie nadpisujemy go
+		if (step.idx > 0 && step.idx <= plan.templates.length && stillTicked(plan.templates[step.idx - 1].optionId)) {
+			notify(`${NAME}: najpierw kliknij „Wyślij” dla poziomu ${plan.templates[step.idx - 1].optionId}.`);
+			return;
 		}
-		return data.villages.map(v => ({ village: v, ...planVillage(v, data, settings) }));
+		if (step.idx < plan.templates.length) {
+			const tp = plan.templates[step.idx];
+			const ticked = await fillLevel(tp);
+			step.idx++;
+			storageSet('plan2', plan);
+			renderProgress(plan);
+			notify(ticked
+				? `${NAME}: strona ${step.page + 1}, poziom ${tp.optionId} – zaznaczono wiosek: ${ticked}. Sprawdź i kliknij „Wyślij”.`
+				: `${NAME}: strona ${step.page + 1}, poziom ${tp.optionId} – żadna wioska nie ma tego zestawu. Kliknij skrót dla następnego kroku.`,
+			ticked ? 'SuccessMessage' : 'ErrorMessage');
+			return;
+		}
+		if (step.page + 1 < plan.pages) {
+			plan.step = { page: step.page + 1, idx: 0 };
+			storageSet('plan2', plan);
+			location.href = pageUrl(plan.step.page);
+			return;
+		}
+		storageRemove('plan2');
+		renderProgress(null);
+		notify(NAME + ': gotowe – wszystkie strony wypełnione.', 'SuccessMessage');
 	}
 
 	// ---------- Panel ----------
@@ -245,6 +321,7 @@
 	function unitIcon(u) {
 		return `<img src="${image_base}unit/unit_${u}.png" style="vertical-align:middle">`;
 	}
+	const unitsText = t => Object.keys(t).filter(u => t[u] > 0).map(u => `${unitIcon(u)}${fmt(t[u])}`).join(' ');
 
 	function readPanel() {
 		const s = JSON.parse(JSON.stringify(DEFAULTS));
@@ -254,7 +331,7 @@
 			s.reserve[u] = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)) || 0);
 		}
 		s.levels = [1, 2, 3, 4].map(i => $(`#${NS}_level_${i}`).is(':checked'));
-		s.mode = $(`input[name=${NS}_mode]:checked`).val() === 'time' ? 'time' : 'equal';
+		s.mode = $(`input[name=${NS}_mode]:checked`).val() === 'time' ? 'time' : 'best';
 		const hours = Number(String($(`#${NS}_hours`).val() ?? '').replace(',', '.'));
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
 		return s;
@@ -269,38 +346,33 @@
 		const levelBoxes = [1, 2, 3, 4].map(i =>
 			`<label style="display:inline-block;white-space:nowrap;margin-right:14px"><input type="checkbox" id="${NS}_level_${i}" ${settings.levels[i - 1] ? 'checked' : ''}> ${i}</label>`).join('');
 
-		const html = `
+		$('#content_value').prepend(`
 		<div id="${NS}" class="vis vis_item" style="margin-bottom:10px;padding:8px">
 			<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
-			<p style="margin:0 0 8px 0">Działa na grupie wybranej na tej stronie (wszystkie strony listy). Każda wioska dostaje własny podział.</p>
+			<p style="margin:0 0 8px 0">Zaznacz jednostki – skrypt sam dobierze zestaw dla wiosek z aktywnej grupy (wszystkie strony) i podzieli go na poziomy tak,
+			żeby wszystko wróciło o jednej godzinie. Wypełnia formularz gry, a „Wyślij” klikasz sam.</p>
 			<table class="vis" style="width:100%">
 				<tr><th>Jednostka</th><th>Wysyłaj</th><th>Zostaw w wiosce</th></tr>
 				${unitRows}
 				<tr><th colspan="3">Poziomy i czas</th></tr>
 				<tr><td>Poziomy</td><td colspan="2"><div style="white-space:nowrap">${levelBoxes}</div>
-					<small>używane są tylko odblokowane i wolne poziomy; oddział musi mieć min. 10 populacji, inaczej pomijany jest najsłabszy poziom</small></td></tr>
+					<small>oddział musi mieć min. 10 populacji – przy małych zestawach odznacz poziom 1</small></td></tr>
 				<tr><td>Tryb</td><td colspan="2">
-					<label><input type="radio" name="${NS}_mode" value="equal" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Równy powrót</b> – wszystkie dostępne wojska, wszystkie poziomy wracają razem</label><br>
-					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Zadany czas</b> – tylko tyle wojsk, żeby wrócić po</label>
-					<input type="text" id="${NS}_hours" value="${settings.hours}" style="width:40px"> h
-					<br><small>gdy wojsk jest za mało na zadany czas, wysyłane są wszystkie i wracają wcześniej</small></td></tr>
+					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Najwięcej łupu na godzinę</b> – skrypt sam dobiera wielkość zestawu</label><br>
+					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
+					<input type="text" id="${NS}_hours" value="${settings.hours}" style="width:40px"> h</td></tr>
 			</table>
 			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
-			<div style="margin-top:8px">
-				<input type="button" class="btn" id="${NS}_calc" value="Oblicz plan">
-				<input type="button" class="btn btn-disabled" id="${NS}_send" value="Wyślij partię">
-			</div>
+			<div style="margin-top:8px"><input type="button" class="btn" id="${NS}_calc" value="Oblicz zestaw"></div>
 			<div id="${NS}_plan" style="margin-top:8px"></div>
-		</div>`;
-		$('#content_value').prepend(html);
+		</div>`);
 
 		const update = () => {
 			const s = readPanel();
-			storageSet('settings', s);
-			// ostrzeżenie: zaznaczone jednostki bez rezerwy wyjadą w całości z każdej wioski grupy, także z wiosek atakowanych
+			storageSet('settings2', s);
 			const noReserve = units.filter(u => s.units[u] && !s.reserve[u]).map(u => UNIT_NAMES[u]);
 			$('#' + NS + '_warn').html(noReserve.length
-				? `Uwaga: bez rezerwy (${noReserve.join(', ')}) – skrypt wyśle wszystkie własne jednostki tego typu z każdej wioski grupy, także z wiosek atakowanych. ` +
+				? `Uwaga: bez rezerwy (${noReserve.join(', ')}) – zestaw może zabrać te jednostki w całości, także z wiosek atakowanych. ` +
 				'Wpisz „Zostaw w wiosce” albo wybierz grupę bez atakowanych wiosek.'
 				: '');
 		};
@@ -308,152 +380,96 @@
 		update();
 	}
 
-	function renderPlan(plan, data) {
-		const rows = [];
-		let squadsTotal = 0;
-		let haulTotal = 0;
-		let skipped = 0;
-		for (const p of plan) {
-			if (!p.squads.length) { skipped++; continue; }
-			squadsTotal += p.squads.length;
-			const haul = p.squads.reduce((t, s) => t + s.haul, 0);
-			haulTotal += haul;
-			const back = Math.max(...p.squads.map(s => s.seconds));
-			const cells = [1, 2, 3, 4].map(id => {
-				const s = p.squads.find(x => x.optionId === id);
-				if (!s) { return '<td style="color:#999">–</td>'; }
-				return '<td>' + Object.keys(s.counts).map(u => `${unitIcon(u)}${fmt(s.counts[u])}`).join(' ') + '</td>';
-			}).join('');
-			rows.push(`<tr><td>${esc(p.village.village_name)}</td>${cells}<td>${fmtTime(back)}</td><td>${fmt(haul)}</td></tr>`);
-		}
-		const header = [1, 2, 3, 4].map(id => `<th>Poziom ${id}</th>`).join('');
-		const batches = Math.ceil(plan.filter(p => p.squads.length).length / BATCH_VILLAGES);
+	function renderPlan(plan) {
+		const rows = plan.templates.map((tp, i) =>
+			`<tr><td>Poziom ${tp.optionId}</td><td>${unitsText(tp.units)}</td><td>${plan.counts[i]} z ${plan.villageCount}</td></tr>`).join('');
 		$('#' + NS + '_plan').html(`
-			<p>Wiosek z wysyłką: <b>${plan.length - skipped}</b> z ${plan.length}, oddziałów: <b>${squadsTotal}</b>,
-			łup razem: <b>${fmt(haulTotal)}</b> surowców. Partii do wysłania: <b>${batches}</b> (tyle kliknięć „Wyślij partię”).</p>
-			<div style="max-height:360px;overflow-y:auto;border:1px solid #c1a264">
-				<table class="vis" style="width:100%"><tr><th>Wioska</th>${header}<th>Powrót za</th><th>Łup</th></tr>${rows.join('')}</table>
-			</div>
-			${skipped ? `<small>Pominięte wioski (${skipped}): ${plan.filter(p => !p.squads.length).slice(0, 15).map(p =>
-				esc(p.village.village_name.trim()) + ' – ' + p.reason).join('; ')}${skipped > 15 ? '…' : ''}</small>` : ''}`);
+			<p>Wszystkie oddziały wrócą po ok. <b>${fmtTime(plan.seconds)}</b>. Łup: <b>${fmt(plan.loot)}</b> surowców
+			(${plan.pages > 1 ? 'wszystkie strony: ' + plan.pages : '1 strona'}).
+			${plan.droppedUnits.length ? `<br><small>Pominięte (większość wiosek ich nie ma): ${plan.droppedUnits.map(u => UNIT_NAMES[u]).join(', ')}.</small>` : ''}</p>
+			<table class="vis" style="width:100%">
+				<tr><th>Poziom</th><th>Zestaw (każda wioska)</th><th>Wiosek wyśle</th></tr>${rows}
+			</table>
+			<p style="margin-top:6px"><input type="button" class="btn" id="${NS}_next" value="Następny krok">
+			<span id="${NS}_progress" style="margin-left:8px"></span></p>
+			<small>Każde kliknięcie skrótu (albo „Następny krok”) wypełnia kolejny poziom albo przechodzi na następną stronę.
+			Po każdym wypełnieniu sprawdź i kliknij „Wyślij” gry.</small>`);
+		renderProgress(plan);
 	}
 
-	// Jedno zapytanie = jedna partia; ten sam format, którego używa przycisk „Wyślij” gry
-	function sendBatch(batch) {
-		const squadRequests = [];
-		for (const p of batch) {
-			for (const s of p.squads) {
-				squadRequests.push({
-					village_id: p.village.village_id,
-					candidate_squad: { unit_counts: s.counts, carry_max: s.carry },
-					option_id: s.optionId,
-					use_premium: false
-				});
-			}
-		}
-		return new Promise((resolve, reject) => {
-			TribalWars.post('scavenge_api', { ajaxaction: 'send_squads' }, { squad_requests: squadRequests },
-				response => resolve({ response, count: squadRequests.length }),
-				() => reject('serwer gry odrzucił zapytanie'));
-		});
+	function renderProgress(plan) {
+		const el = $('#' + NS + '_progress');
+		if (!plan) { el.html('<b>Gotowe.</b>'); $('#' + NS + '_next').addClass('btn-disabled'); return; }
+		const { page, idx } = plan.step;
+		const what = idx < plan.templates.length
+			? `wypełnienie poziomu ${plan.templates[idx].optionId}`
+			: (page + 1 < plan.pages ? `przejście na stronę ${page + 2}` : 'koniec');
+		el.html(`Następnie: <b>${what}</b> (strona ${page + 1} z ${plan.pages})`);
 	}
 
 	// ---------- Start ----------
 
 	try {
-		console.log(NAME + ' ' + VERSION + ': start', game_data.screen, game_data.mode);
-		// Gra potrafi wyzerować game_data.mode w tle (np. okienko grup), więc ekran rozpoznajemy też po adresie i treści strony
+		// skrót wykonany dwa razy tuż po sobie (zdarza się w grze) liczy się jako jedno kliknięcie
+		if (Date.now() - (window[NS + '_lastRun'] || 0) < 1500) { return; }
+		window[NS + '_lastRun'] = Date.now();
+
+		// Gra potrafi wyzerować game_data.mode w tle, więc ekran rozpoznajemy też po adresie i treści strony
 		const onMassScreen = game_data.screen === 'place' && (game_data.mode === 'scavenge_mass' ||
 			/[?&]mode=scavenge_mass(&|$)/.test(location.href) || $('#scavenge_mass_screen').length > 0);
 		if (!onMassScreen) {
-			location.href = '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass' + sitterParam();
+			const plan = loadPlan();
+			location.href = pageUrl(plan ? plan.step.page : 0);
 			return;
 		}
-		// Drugie kliknięcie chowa panel – ale podwójne uruchomienie tuż po otwarciu (np. skrót wykonany dwa razy) jest ignorowane
+		const premium = game_data.features && game_data.features.Premium;
+		if (!premium || !premium.active) {
+			notify(NAME + ': Zbieractwo masowe wymaga aktywnego Konta Premium.');
+			return;
+		}
+
+		// panel już otwarty → skrót wykonuje następny krok planu
 		if ($('#' + NS).length) {
-			if (Date.now() - ($('#' + NS).data('opened') || 0) > 1500) { $('#' + NS).remove(); }
+			if (loadPlan()) { nextStep().catch(ex => notify(NAME + ': ' + ex)); }
+			else { notify(NAME + ': kliknij „Oblicz zestaw”.', 'InfoMessage'); }
 			return;
 		}
-		if (!$('#content_value').length) { notify(NAME + ': nie znaleziono treści strony – włącz wersję gry na komputer.'); return; }
 
-		const settings = loadSettings();
-		renderPanel(settings);
-		$('#' + NS).data('opened', Date.now());
-
-		let plan = null;
-		let planTime = 0;
-		let queue = [];
+		renderPanel(loadSettings());
 		let busy = false;
-		let sentBatches = 0;
+		const existing = loadPlan();
+		if (existing) {
+			renderPlan(existing);
+			nextStep().catch(ex => notify(NAME + ': ' + ex)); // np. po przejściu na następną stronę
+		}
 
 		$('#' + NS + '_calc').on('click', async () => {
 			if (busy) { return; }
 			busy = true;
-			queue = [];
-			sentBatches = 0; // nowy plan – numeracja partii od początku
-			$('#' + NS + '_send').addClass('btn-disabled').val('Wyślij partię');
 			$('#' + NS + '_plan').html('<i>Pobieranie aktualnych wojsk ze wszystkich stron…</i>');
 			try {
-				const s = readPanel();
-				storageSet('settings', s);
-				const data = await fetchAll();
-				plan = createPlan(data, s);
-				planTime = Date.now();
-				renderPlan(plan, data);
-				const withSquads = plan.filter(p => p.squads.length);
-				for (let i = 0; i < withSquads.length; i += BATCH_VILLAGES) { queue.push(withSquads.slice(i, i + BATCH_VILLAGES)); }
-				if (queue.length) {
-					$('#' + NS + '_send').removeClass('btn-disabled').val(`Wyślij partię 1/${queue.length}`);
-				}
+				const plan = createPlan(await fetchAllPages(), readPanel());
+				plan.time = Date.now();
+				plan.step = { page: currentPage() < plan.pages ? currentPage() : 0, idx: 0 };
+				storageSet('plan2', plan);
+				renderPlan(plan);
 			} catch (ex) {
 				$('#' + NS + '_plan').html('');
+				storageRemove('plan2');
 				notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się pobrać danych z gry – spróbuj ponownie.'));
 			} finally {
 				busy = false;
 			}
 		});
 
-		$('#' + NS + '_send').on('click', async function () {
-			if (busy || !queue.length) { return; }
-			if (Date.now() - planTime > PLAN_TTL) {
-				queue = [];
-				$(this).addClass('btn-disabled').val('Wyślij partię');
-				notify(NAME + ': plan ma ponad 10 minut – kliknij „Oblicz plan” jeszcze raz.');
-				return;
-			}
+		$('#' + NS).on('click', `#${NS}_next`, async () => {
+			if (busy) { return; }
 			busy = true;
-			$(this).addClass('btn-disabled');
-			const total = sentBatches + queue.length;
-			const batch = queue.shift();
-			try {
-				const { response, count } = await sendBatch(batch);
-				sentBatches++;
-				const r = (response && response.squad_responses) ? response : (response && response.response) || {};
-				const results = r.squad_responses || [];
-				const failed = results.filter(x => !x.success);
-				let msg = `${NAME}: partia ${sentBatches}/${total} – wysłano ${count - failed.length} z ${count} oddziałów.`;
-				if (failed.length) {
-					const reasons = [...new Set(failed.map(x => x.error).filter(Boolean))];
-					msg += `<br>Nie wysłano ${failed.length}` + (reasons.length ? ': ' + reasons.map(esc).join('; ') : '') +
-						' (np. wojska zmieniły się od obliczenia planu).';
-				}
-				if (r.invalid_village_ids && r.invalid_village_ids.length) { msg += `<br>Pominięte wioski: ${r.invalid_village_ids.length}.`; }
-				msg += queue.length ? ' Kliknij „Wyślij partię” dla następnej.' : ' To była ostatnia partia – odśwież stronę.';
-				notify(msg, failed.length ? 'ErrorMessage' : 'SuccessMessage');
-			} catch (ex) {
-				queue.unshift(batch); // nie wysłano – partia zostaje do ponownej próby
-				notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'błąd wysyłki') + '. Spróbuj ponownie albo przelicz plan.');
-			} finally {
-				busy = false;
-				if (queue.length) {
-					$(this).removeClass('btn-disabled').val(`Wyślij partię ${sentBatches + 1}/${sentBatches + queue.length}`);
-				} else {
-					$(this).val('Wysłano wszystko');
-				}
-			}
+			try { await nextStep(); }
+			catch (ex) { notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się wypełnić formularza.')); }
+			finally { busy = false; }
 		});
 	} catch (ex) {
-		// każdy błąd widoczny na ekranie, a nie tylko w konsoli
 		notify(NAME + ' ' + VERSION + ': błąd – ' + (ex && ex.message ? ex.message : ex));
 		console.error(NAME, ex);
 	}
