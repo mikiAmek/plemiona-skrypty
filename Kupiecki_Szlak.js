@@ -10,7 +10,7 @@
  */
 
 /*
- * Kupiecki Szlak v3.2.4
+ * Kupiecki Szlak v3.2.5
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -46,7 +46,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.2.4';
+	const VERSION = 'v3.2.5';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -623,6 +623,10 @@
 			$(`input[name=${NS}_mode][value=single]`).prop('disabled', off);
 			$('#' + NS + '_targetId').prop('disabled', off);
 			if (off) { $(`input[name=${NS}_mode][value=spread]`).prop('checked', true); }
+			// „do pełna” nie ma sensu bez dawców (nikt nie miałby nadmiaru) – przełączamy na średnią
+			$('#' + NS + '_fillMax').prop('disabled', off).css('opacity', off ? 0.4 : 1)
+				.attr('title', off ? 'Przy „Bez dawców” użyj średniej – przy „do pełna” żadna wioska nie ma nadmiaru' : '');
+			if (off && panelState.fillToMode() === 'full' && panelState.setFillTo) { panelState.setFillTo('avg'); return; }
 			$('#' + NS + '_summary').html(describe(readPanel(), villages));
 			$('#' + NS + '_spreadInfo').text(off ? '(wszystkie wioski)' : '(wszystkie wioski oprócz dawców)');
 
@@ -660,6 +664,8 @@
 		$('#' + NS).on('input', `[id^="${NS}_fillTo_"]`, () => { fillToMode = 'manual'; showModeInfo(); updateDonorCount(); });
 		showModeInfo();
 		panelState.fillToMode = () => fillToMode;
+		panelState.setFillTo = setFillTo;
+		updateDonorCount(); // ponownie, gdy przyciski są już podpięte
 
 		$('#' + NS + '_toggleSettings').on('click', function (e) {
 			e.preventDefault();
