@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v1.0.6
+ * Równe Zbieractwo v1.0.7
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -28,7 +28,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.6';
+	const VERSION = 'v1.0.7';
 	const NS = 'RowneZbieractwo';
 	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
@@ -364,11 +364,16 @@
 		location.href = '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass' + sitterParam();
 		return;
 	}
-	if ($('#' + NS).length) { $('#' + NS).remove(); return; } // drugie kliknięcie chowa panel
+	// Drugie kliknięcie chowa panel – ale podwójne uruchomienie tuż po otwarciu (np. skrót wykonany dwa razy) jest ignorowane
+	if ($('#' + NS).length) {
+		if (Date.now() - ($('#' + NS).data('opened') || 0) > 1500) { $('#' + NS).remove(); }
+		return;
+	}
 	if (!$('#content_value').length) { notify(NAME + ': nie znaleziono treści strony – włącz wersję gry na komputer.'); return; }
 
 	const settings = loadSettings();
 	renderPanel(settings);
+	$('#' + NS).data('opened', Date.now());
 
 	let plan = null;
 	let planTime = 0;
