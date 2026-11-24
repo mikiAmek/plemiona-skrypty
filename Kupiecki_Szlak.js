@@ -10,7 +10,7 @@
  */
 
 /*
- * Kupiecki Szlak v3.2.2
+ * Kupiecki Szlak v3.2.4
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -46,7 +46,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.2.2';
+	const VERSION = 'v3.2.4';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -68,7 +68,7 @@
 		mode: 'single',              // 'single' – do jednej wioski, 'spread' – do pozostałych wiosek
 		targetId: '',                // wioska docelowa w trybie 'single'
 		fillTo: [0, 0, 0],           // uzupełniaj do
-		fillToAvg: true,             // true – w polu jest średnia i ma być aktualizowana sama
+		fillToMode: 'avg',           // 'avg' – średnia, 'full' – do pełna (obie aktualizowane same), 'manual' – wpisane ręcznie
 		priorityAuto: true,          // minimum = połowa „Uzupełniaj do”
 		priorityLevel: [0, 0, 0],    // gdy zabraknie surowców, najpierw każdemu po tyle (0 = bez minimum)
 		fillPercent: 95,             // maks. zapełnienie spichlerza: nikt nie dostanie więcej, a wioska ponad próg oddaje nadwyżkę
@@ -497,21 +497,28 @@
 		).join('');
 	}
 
-	const panelState = { fillToAvg: () => false };
+	const panelState = { fillToMode: () => 'manual' };
+
+	// Wartości „Uzupełniaj do” liczone z aktualnych danych dla trybów automatycznych
+	const autoFillTo = (villages, mode) => {
+		if (mode === 'avg') {
+			return [0, 1, 2].map(i => Math.floor(villages.reduce((t, v) => t + v.resources[i] + v.incoming[i], 0) / villages.length));
+		}
+		const max = Math.max(...villages.map(v => v.capacity));
+		return [max, max, max];
+	};
 
 	function renderPanel(villages, settings) {
 		$('#' + NS).remove();
 
 		const caps = villages.map(v => v.capacity);
-		// pierwsze uruchomienie: zamiast zer od razu średnia, żeby cel nigdy nie był pusty
-		const avgNow = [0, 1, 2].map(i => Math.floor(villages.reduce((sum, v) => sum + v.resources[i] + v.incoming[i], 0) / villages.length));
-		// Średnia (wstawiona przyciskiem lub przy pierwszym otwarciu) jest odświeżana przy każdym otwarciu;
-		// liczby wpisane ręcznie zostają bez zmian.
-		if (settings.fillToAvg || !settings.fillTo.some(x => x > 0)) {
-			settings.fillTo = avgNow;
-			settings.fillToAvg = true;
+		// „Średnia” i „do pełna” są przeliczane przy każdym otwarciu; liczby wpisane ręcznie zostają.
+		// Pierwsze uruchomienie (same zera): od razu średnia, żeby cel nigdy nie był pusty.
+		if (!settings.fillTo.some(x => x > 0)) { settings.fillToMode = 'avg'; }
+		if (settings.fillToMode === 'avg' || settings.fillToMode === 'full') {
+			settings.fillTo = autoFillTo(villages, settings.fillToMode);
 		}
-		panelState.fillToAvg = () => !!settings.fillToAvg; // do czasu podpięcia przycisków
+		panelState.fillToMode = () => settings.fillToMode; // do czasu podpięcia przycisków
 		const avg = [0, 1, 2].map(i => Math.floor(villages.reduce((sum, v) => sum + v.resources[i] + v.incoming[i], 0) / villages.length));
 		const esc = t => $('<div>').text(t).html();
 
@@ -583,9 +590,10 @@
 				<tr><td>Minimalny transport</td>
 					<td>${numIn('minTransport', settings.minTransport, 75)} <small>mniejsze są pomijane</small></td></tr>
 				<tr><td>Opcje</td>
-					<td><label>${chk('countIncoming', settings.countIncoming)} doliczaj surowce w drodze</label> &nbsp;
-					<label>${chk('useRelays', settings.useRelays)} szybciej przez pośredników</label> &nbsp;
-					maks. odległość ${numIn('maxDistance', settings.maxDistance, 50)} <small>(0 = bez limitu)</small></td></tr>
+					<td><label>${chk('countIncoming', settings.countIncoming)} doliczaj surowce w drodze</label><br>
+					<label>${chk('useRelays', settings.useRelays)} szybciej przez pośredników</label></td></tr>
+				<tr><td>Maks. odległość<br><small>0 = bez limitu</small></td>
+					<td>${numIn('maxDistance', settings.maxDistance, 50)} pól</td></tr>
 			</table>
 			<table class="vis" style="width:100%;margin-top:8px"><tr><td id="${NS}_summary" style="padding:6px;line-height:1.5"></td></tr></table>
 			<div style="margin-top:8px">
@@ -636,21 +644,22 @@
 		$('#' + NS).on('input change', `#${NS}_settings input, #${NS}_settings select`, updateDonorCount);
 		updateDonorCount();
 
-		// fillToAvg: czy w polu „Uzupełniaj do” jest średnia (aktualizowana sama)
-		let fillToAvg = !!settings.fillToAvg;
-		const showAvgInfo = () => $('#' + NS + '_fillAvgInfo').text(fillToAvg ? '✓ średnia – aktualizuje się sama' : '');
-		const setFillTo = (values, isAvg) => {
-			values.forEach((v, i) => $('#' + NS + '_fillTo_' + i).val(v));
-			fillToAvg = isAvg;
-			showAvgInfo();
+		// Tryb pola „Uzupełniaj do”: średnia / do pełna (aktualizowane same) albo ręcznie
+		let fillToMode = settings.fillToMode || 'manual';
+		const MODE_INFO = { avg: '✓ średnia – aktualizuje się sama', full: '✓ do pełna – aktualizuje się sama (po rozbudowie spichlerzy też)' };
+		const showModeInfo = () => $('#' + NS + '_fillAvgInfo').text(MODE_INFO[fillToMode] || '');
+		const setFillTo = mode => {
+			fillToMode = mode;
+			autoFillTo(villages, mode).forEach((v, i) => $('#' + NS + '_fillTo_' + i).val(v));
+			showModeInfo();
 			$('#' + NS + '_fillTo_0').trigger('change');
 		};
-		$('#' + NS + '_fillAvg').on('click', () => setFillTo(avg, true));
-		$('#' + NS + '_fillMax').on('click', () => { const m = Math.max(...caps); setFillTo([m, m, m], false); });
-		// ręczna zmiana liczby wyłącza automatyczną średnią
-		$('#' + NS).on('input', `[id^="${NS}_fillTo_"]`, () => { fillToAvg = false; showAvgInfo(); updateDonorCount(); });
-		showAvgInfo();
-		panelState.fillToAvg = () => fillToAvg;
+		$('#' + NS + '_fillAvg').on('click', () => setFillTo('avg'));
+		$('#' + NS + '_fillMax').on('click', () => setFillTo('full'));
+		// ręczna zmiana liczby wyłącza automatyczną aktualizację
+		$('#' + NS).on('input', `[id^="${NS}_fillTo_"]`, () => { fillToMode = 'manual'; showModeInfo(); updateDonorCount(); });
+		showModeInfo();
+		panelState.fillToMode = () => fillToMode;
 
 		$('#' + NS + '_toggleSettings').on('click', function (e) {
 			e.preventDefault();
@@ -679,9 +688,9 @@
 				const members = (s.useDonors && s.donorByGroup && s.donorGroupId)
 					? await loadGroupMembers(s.donorGroupId, fresh.activeGroupId, true)
 					: null;
-				if (s.fillToAvg) {
-					// średnia z aktualnych danych (surowce mogły urosnąć od otwarcia panelu)
-					s.fillTo = [0, 1, 2].map(i => Math.floor(fresh.reduce((t, v) => t + v.resources[i] + v.incoming[i], 0) / fresh.length));
+				if (s.fillToMode === 'avg' || s.fillToMode === 'full') {
+					// średnia / do pełna z aktualnych danych (surowce i spichlerze mogły się zmienić)
+					s.fillTo = autoFillTo(fresh, s.fillToMode);
 					if (s.priorityAuto) { s.priorityLevel = s.fillTo.map(x => Math.floor(x / 2)); }
 					s.fillTo.forEach((v, i) => $('#' + NS + '_fillTo_' + i).val(v));
 					s.priorityLevel.forEach((v, i) => $('#' + NS + '_priorityLevel_' + i).val(v));
@@ -794,7 +803,8 @@
 			: (s.useDonors ? 'Wszystkie wioski oprócz dawców są uzupełniane' : 'Wszystkie wioski są uzupełniane');
 		if (set(s.fillTo)) {
 			lines.push(`${who} do <b>${r3(s.fillTo)}</b>` +
-				(s.fillToAvg ? ' (<b>średnia</b> – aktualizuje się sama przy każdym planie)' : '') +
+				(s.fillToMode === 'avg' ? ' (<b>średnia</b> – aktualizuje się sama przy każdym planie)'
+					: s.fillToMode === 'full' ? ' (<b>do pełna</b> – aktualizuje się sama)' : '') +
 				`, ale żaden spichlerz nie zostanie zapełniony ponad ${s.fillPercent}%.`);
 		} else {
 			lines.push('<b style="color:#c00">Wpisz „Uzupełniaj do” (albo kliknij „wstaw średnią” / „do pełna”).</b>');
@@ -832,7 +842,7 @@
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'single',
 			targetId: String($('#' + NS + '_targetId').val() || ''),
 			fillTo: arr('fillTo'),
-			fillToAvg: panelState.fillToAvg(),
+			fillToMode: panelState.fillToMode(),
 			priorityAuto: $('#' + NS + '_priorityAuto').is(':checked'),
 			priorityLevel: $('#' + NS + '_priorityAuto').is(':checked')
 				? arr('fillTo').map(x => Math.floor(x / 2))
