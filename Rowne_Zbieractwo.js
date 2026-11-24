@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.3.0';
+	const VERSION = 'v2.3.1';
 	const NS = 'RowneZbieractwo';
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
@@ -58,6 +58,7 @@
 	const sitterParam = () =>
 		(game_data.player.sitter && game_data.player.sitter !== '0') ? '&t=' + game_data.player.id : '';
 
+	const fmtHours = h => Number.isInteger(h) ? String(h) : Math.floor(h) + ':' + String(Math.round(h % 1 * 60)).padStart(2, '0');
 	const storageKey = key => NS + '_' + game_data.player.id + '_' + key;
 	function storageGet(key) {
 		try { return JSON.parse(localStorage.getItem(storageKey(key))); } catch (e) { return null; }
@@ -239,7 +240,8 @@
 				};
 				if (settings.mode === 'time') {
 					const opt = data.options[lv[0]];
-					const haul = haulForDuration(opt, settings.hours * 3600);
+					if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz np. 1:35 (1 h 35 min) albo 1,5 (półtorej godziny).'; }
+				const haul = haulForDuration(opt, settings.hours * 3600);
 					if (haul <= 0) { timeTooShort = fmtTime(duration(opt, 0)); continue; }
 					const s = haul / (opt.loot_factor * share(lv[0]) * carryOf(m, units));
 					const tps = templatesFor(s);
@@ -357,8 +359,12 @@
 		}
 		s.levels = [1, 2, 3, 4].map(i => $(`#${NS}_level_${i}`).is(':checked'));
 		s.mode = $(`input[name=${NS}_mode]:checked`).val() === 'time' ? 'time' : 'best';
-		const hours = Number(String($(`#${NS}_hours`).val() ?? '').replace(',', '.'));
+		// „1:35” = 1 h 35 min, „1,5” / „1.5” = półtorej godziny
+		const rawH = String($(`#${NS}_hours`).val() ?? '').trim();
+		const hm = rawH.match(/^(\d+):(\d{1,2})$/);
+		const hours = hm ? Number(hm[1]) + Number(hm[2]) / 60 : Number(rawH.replace(',', '.'));
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
+		s.hoursValid = hours > 0;
 		return s;
 	}
 
@@ -385,7 +391,7 @@
 				<tr><td>Tryb</td><td colspan="2">
 					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Najwięcej łupu na godzinę</b> – skrypt sam dobiera wielkość zestawu</label><br>
 					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
-					<input type="text" id="${NS}_hours" value="${settings.hours}" style="width:40px"> h</td></tr>
+					<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" style="width:50px"> h <small>(np. 1:35 albo 1,5)</small></td></tr>
 			</table>
 			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
 			<div style="margin-top:8px"><input type="button" class="btn" id="${NS}_calc" value="Oblicz zestaw"></div>
