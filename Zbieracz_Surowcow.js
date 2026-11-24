@@ -1,5 +1,5 @@
 /*
- * Zbieracz Surowców v2.8.2
+ * Zbieracz Surowców v2.8.4
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -34,7 +34,7 @@
 	}
 
 	const NAME = 'Zbieracz Surowców';
-	const VERSION = 'v2.8.2';
+	const VERSION = 'v2.8.4';
 	const NS = 'Zbieracz_Surowcow';
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -118,7 +118,12 @@
 			if (!link || !coordsMatch) { continue; }
 
 			const [x, y] = coordsMatch[coordsMatch.length - 1].split('|').map(Number);
-			const resources = RES_CLASSES.map(cls => toNumber($(row.cells[3]).find('.res.' + cls).text()));
+			// Surowce: trzy liczby z tekstu komórki (jak w Dysponencie), np. "753 77 1.065".
+			// Gdy tekst nie da trzech liczb – zapasowo po znacznikach .res.wood/.stone/.iron.
+			const resText = $(row.cells[3]).text().trim().split(/\s+/).filter(t => /\d/.test(t));
+			const resources = resText.length === 3
+				? resText.map(toNumber)
+				: RES_CLASSES.map(cls => toNumber($(row.cells[3]).find('.res.' + cls + ', .' + cls).first().text()));
 			const capacity = toNumber($(row.cells[4]).text());
 			const traders = $(row.cells[5]).text().split('/').map(toNumber);
 			const labelEl = $(link).find('.quickedit-label');
@@ -481,6 +486,7 @@
 				} else {
 					storageRemove('plan');
 					$('#' + NS + '_execute').addClass('btn-disabled');
+					$('#' + NS + '_plan').append(diagnose(villages, s));
 				}
 			} catch (ex) { UI.ErrorMessage(NAME + ': ' + ex, 6000); }
 		});
@@ -490,6 +496,36 @@
 			if (!plan) { UI.ErrorMessage(planExpired ? noPlanMessage() : NAME + ': najpierw opracuj plan.', 5000); return; }
 			location.href = callUrl(plan);
 		});
+	}
+
+	// Wyjaśnienie „Brak transportów”: co skrypt widzi u odbiorców i dawców
+	function diagnose(villages, s) {
+		const isDonor = donorTest(s);
+		const esc = t => $('<div>').text(t).html();
+		const sum3 = a => a[0] + a[1] + a[2];
+		const keep = s.donorEmpty ? [0, 0, 0] : s.donorKeep;
+		const level = v => [0, 1, 2].map(i => {
+			const byPercent = Math.floor(v.capacity * s.fillPercent / 100);
+			return s.fillTo[i] > 0 ? Math.min(s.fillTo[i], byPercent) : byPercent;
+		});
+		const receivers = s.mode === 'single'
+			? villages.filter(v => v.id === String(s.targetId))
+			: villages.filter(v => !isDonor(v));
+		const lines = [];
+		for (const r of receivers.slice(0, 5)) {
+			const inc = s.countIncoming ? r.incoming : [0, 0, 0];
+			const lack = [0, 1, 2].map(i => Math.max(0, level(r)[i] - r.resources[i] - inc[i]));
+			lines.push(`Odbiorca ${esc(r.name)}: ma ${r.resources.join('/')}, w drodze ${inc.join('/')}, cel ${level(r).join('/')} → brakuje ${lack.join('/')}`);
+		}
+		const donors = villages.filter(isDonor).filter(d => !(s.mode === 'single' && d.id === String(s.targetId)));
+		if (!donors.length) { lines.push('Dawców: 0 – zmień kryteria dawców.'); }
+		for (const d of donors.slice(0, 8)) {
+			const spare = d.resources.map((r, i) => Math.max(0, r - keep[i]));
+			const traders = Math.max(0, d.tradersFree - s.tradersSafeguard);
+			lines.push(`Dawca ${esc(d.name)}: do oddania ${spare.join('/')} (razem ${sum3(spare)}), wolni kupcy do użycia: ${traders}`);
+		}
+		if (s.minTransport > 0) { lines.push(`Minimalny transport: ${s.minTransport} – mniejsze są pomijane.`); }
+		return `<div style="margin-top:4px;font-size:11px">${lines.join('<br>')}</div>`;
 	}
 
 	function readPanel() {
