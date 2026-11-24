@@ -1,15 +1,4 @@
 /*
- * Przesyłając modyfikację stworzoną przez użytkownika (skrypt) do wykorzystania w grze Tribal Wars,
- * twórca udziela firmie InnoGames wieczystej, nieodwołalnej, ogólnoświatowej, wolnej od opłat
- * licencyjnych, niewyłącznej licencji na używanie, reprodukcję, dystrybucję, publiczne wyświetlanie,
- * modyfikowanie oraz tworzenie dzieł pochodnych na podstawie tej modyfikacji. Licencja ta pozwala
- * firmie InnoGames na włączenie modyfikacji do dowolnego aspektu gry i powiązanych usług, w tym
- * działań promocyjnych i komercyjnych, bez konieczności wypłaty wynagrodzenia lub podania autora.
- * Osoba przesyłająca oświadcza i gwarantuje, że posiada prawne prawo do udzielenia tej licencji
- * oraz że modyfikacja nie narusza praw osób trzecich.
- */
-
-/*
  * Kupiecki Szlak v3.3.1
  * Autor: Mavionis
  *
