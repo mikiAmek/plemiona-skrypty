@@ -1,12 +1,24 @@
 /*
- * Zbieracz Surowców v2.15.0
+ * Przesyłając modyfikację stworzoną przez użytkownika (skrypt) do wykorzystania w grze Tribal Wars,
+ * twórca udziela firmie InnoGames wieczystej, nieodwołalnej, ogólnoświatowej, wolnej od opłat
+ * licencyjnych, niewyłącznej licencji na używanie, reprodukcję, dystrybucję, publiczne wyświetlanie,
+ * modyfikowanie oraz tworzenie dzieł pochodnych na podstawie tej modyfikacji. Licencja ta pozwala
+ * firmie InnoGames na włączenie modyfikacji do dowolnego aspektu gry i powiązanych usług, w tym
+ * działań promocyjnych i komercyjnych, bez konieczności wypłaty wynagrodzenia lub podania autora.
+ * Osoba przesyłająca oświadcza i gwarantuje, że posiada prawne prawo do udzielenia tej licencji
+ * oraz że modyfikacja nie narusza praw osób trzecich.
+ */
+
+/*
+ * Zbieracz Surowców v3.0.0
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
  *          (Uruchomiony na innym ekranie bez planu – przenosi do Przeglądy > Produkcja.)
  *          Skrypt sprawdza wszystkie wioski z aktywnej grupy i opracowuje plan:
- *          wioski-dawcy (np. spichlerz na 30. poziomie) oddają surowce do zadanego
- *          minimum (np. 0), a surowce trafiają do wybranej wioski albo do pozostałych wiosek.
+ *          wioski-dawcy (wybrane wg grupy, pojemności spichlerza lub punktów) oddają surowce,
+ *          a surowce trafiają do wybranej wioski albo do pozostałych wiosek. Możliwe jest też
+ *          samo wyrównywanie surowców między wioskami (bez dawców).
  * KROK 2 – „Wykonaj plan” przenosi na Rynek > Wezwij. Kliknij skrypt – wypełni formularz,
  *          wezwanie wysyłasz SAM przyciskiem „Poproś o surowce”. Kolejne wezwanie: kliknij skrypt
  *          (wczyta i wypełni formularz następnej wioski) i znów „Poproś o surowce”.
@@ -34,7 +46,7 @@
 	}
 
 	const NAME = 'Zbieracz Surowców';
-	const VERSION = 'v2.15.0';
+	const VERSION = 'v3.0.0';
 	const NS = 'Zbieracz_Surowcow';
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -42,26 +54,30 @@
 	const RES_CLASSES = ['wood', 'stone', 'iron'];
 
 	const DEFAULTS = {
-		useDonors: true,            // false – bez dawców, tylko wyrównywanie nadwyżek między wioskami
-		donorByStorage: true,       // kryterium dawcy: poziom spichlerza
-		donorMinLevel: 30,          //   spichlerz od tego poziomu
-		donorByPoints: false,       // kryterium dawcy: punkty wioski
-		donorMinPoints: 9000,       //   punkty od tej wartości
-		donorMatch: 'all',          // 'all' – wszystkie zaznaczone kryteria, 'any' – dowolne z nich
-		donorEmpty: true,           // true – opróżniaj dawców do 0, false – zostaw donorKeep
-		donorKeep: [0, 0, 0],       // ile zostawić w dawcy, gdy donorEmpty = false
-		priorityLevel: [0, 0, 0],   // zabezpieczenie: najpierw każdy odbiorca do tej ilości (0 = wyłączone)
-		balanceKeep: [0, 0, 0],     // wyrównywanie: ile wioska oddająca nadmiar zostawia u siebie (0 = do poziomu celu)
-		tradersSafeguard: 0,        // ilu kupców zostawić wolnych w każdej wiosce
-		mode: 'single',             // 'single' – do jednej wioski, 'spread' – do pozostałych wiosek
-		targetId: '',               // wioska docelowa w trybie 'single'
-		fillTo: [0, 0, 0],          // dopełniaj odbiorcę do tej ilości (0 = bez limitu ilości)
-		fillPercent: 95,            // maks. zapełnienie spichlerza: nikt nie dostanie więcej, a wioska ponad próg oddaje nadwyżkę
-		maxDistance: 0,             // maks. odległość dawca–odbiorca, 0 = bez limitu
-		minTransport: 0,            // pomijaj transporty mniejsze niż tyle surowców łącznie
-		useRelays: true,            // szybsze dostawy przez pośredników
-		relayKeep: [0, 0, 0],       // ile pośrednik musi mieć u siebie po pożyczeniu
-		countIncoming: true         // doliczaj surowce już jadące do odbiorcy
+		// 1. Dawcy
+		useDonors: true,             // false – bez dawców, tylko wyrównywanie nadwyżek między wioskami
+		donorByGroup: false,         // kryterium: wioska należy do grupy
+		donorGroupId: '',            //   id grupy
+		donorByStorage: true,        // kryterium: pojemność spichlerza
+		donorMinCapacity: 400000,    //   od tej pojemności (400 000 = poziom 30)
+		donorByPoints: false,        // kryterium: punkty wioski
+		donorMinPoints: 9000,        //   od tej liczby punktów
+		donorMatch: 'all',           // 'all' – wszystkie zaznaczone kryteria, 'any' – dowolne z nich
+		donorKeep: [0, 0, 0],        // ile zostaje w dawcy (0 = opróżnij do zera)
+		// 2. Odbiorcy
+		mode: 'single',              // 'single' – do jednej wioski, 'spread' – do pozostałych wiosek
+		targetId: '',                // wioska docelowa w trybie 'single'
+		fillTo: [0, 0, 0],           // uzupełniaj do (0 = do limitu spichlerza)
+		priorityLevel: [0, 0, 0],    // najpierw każdemu minimum (0 = bez minimum)
+		fillPercent: 95,             // maks. zapełnienie spichlerza: nikt nie dostanie więcej, a wioska ponad próg oddaje nadwyżkę
+		// 3. Ochrona – w każdej wiosce zawsze zostaje
+		reserve: [0, 0, 0],          // surowce, poniżej których nie zejdzie żadna wioska poza dawcami
+		tradersSafeguard: 0,         // wolni kupcy – w każdej wiosce, także w dawcach
+		// 4. Transporty
+		minTransport: 0,             // pomijaj transporty mniejsze niż tyle surowców łącznie
+		countIncoming: true,         // doliczaj surowce już jadące do odbiorcy
+		useRelays: true,             // szybsze dostawy przez pośredników
+		maxDistance: 0               // maks. odległość, 0 = bez limitu
 	};
 
 	// ---------- Pomocnicze ----------
@@ -70,9 +86,6 @@
 	const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 	const fmt = n => Number(n).toLocaleString('pl-PL');
 
-	// Pojemność spichlerza na poziomie: 1000 * 1.2294934^(poziom-1) → 30 = 400 000
-	const capacityForLevel = level => Math.round(1000 * Math.pow(1.2294934, level - 1));
-	const levelForCapacity = cap => cap > 0 ? Math.round(Math.log(cap / 1000) / Math.log(1.2294934)) + 1 : 0;
 
 	const sitterParam = () =>
 		(game_data.player.sitter && game_data.player.sitter !== '0') ? '&t=' + game_data.player.id : '';
@@ -108,7 +121,7 @@
 
 	// ---------- Dane wiosek (Przeglądy > Produkcja) ----------
 
-	function parseProduction(html) {
+	function parseProduction(html, allowEmpty) {
 		const table = $('<div>').append($.parseHTML(html)).find('#production_table')[0] || $('#production_table')[0];
 		if (!table) { throw 'Nie znaleziono tabeli przeglądu produkcji.'; }
 
@@ -139,12 +152,11 @@
 				coords: { x, y },
 				resources,
 				capacity,
-				level: levelForCapacity(capacity),
 				tradersFree: traders[0] || 0,
 				tradersAll: traders[1] || 0
 			});
 		}
-		if (!villages.length) { throw 'Nie wczytano żadnej wioski z przeglądu produkcji.'; }
+		if (!villages.length && !allowEmpty) { throw 'Nie wczytano żadnej wioski z przeglądu produkcji.'; }
 		return villages;
 	}
 
@@ -177,9 +189,45 @@
 		return { incoming, count, unknown };
 	}
 
+	// Lista grup z menu „Grupy:” na stronie przeglądu; current = aktualnie wybrana grupa
+	function parseGroups(html) {
+		const doc = $('<div>').append($.parseHTML(html));
+		const groups = [];
+		doc.find('.group-menu-item').each(function () {
+			const id = String($(this).attr('data-group-id') || '');
+			if (!id) { return; }
+			const name = $(this).text().trim().replace(/^[\[>]+|[\]<]+$/g, '').trim();
+			groups.push({ id, name, current: this.tagName.toLowerCase() === 'strong' });
+		});
+		return groups;
+	}
+
+	// Skład grupy dawców. Gra pamięta ostatnio wybraną grupę, więc po odczycie
+	// przywracamy grupę, którą gracz miał wybraną.
+	const groupCache = {};
+	let groupLoading = Promise.resolve();
+	function loadGroupMembers(groupId, activeGroupId, force) {
+		groupLoading = groupLoading.catch(() => {}).then(async () => {
+			if (!force && groupCache[groupId]) { return groupCache[groupId]; }
+			try {
+				const html = await $.get('/game.php?screen=overview_villages&mode=prod&page=-1&group=' + groupId + sitterParam());
+				groupCache[groupId] = new Set(parseProduction(html, true).map(v => v.id));
+			} finally {
+				if (String(activeGroupId) !== String(groupId)) {
+					await $.get('/game.php?screen=overview_villages&mode=prod&group=' + activeGroupId + sitterParam()).catch(() => {});
+				}
+			}
+			return groupCache[groupId];
+		});
+		return groupLoading;
+	}
+
 	async function fetchVillages() {
 		const html = await $.get('/game.php?screen=overview_villages&mode=prod&page=-1' + sitterParam());
 		const villages = parseProduction(html);
+		villages.groups = parseGroups(html);
+		const active = villages.groups.find(g => g.current);
+		villages.activeGroupId = active ? active.id : String(game_data.group_id || '0');
 
 		// Pobierane zawsze – checkbox w panelu decyduje tylko, czy są liczone.
 		// Błąd odczytu nie blokuje skryptu, ale jest wyraźnie pokazany w panelu.
@@ -201,13 +249,17 @@
 
 	// ---------- Planowanie ----------
 
-	// Zwraca funkcję sprawdzającą, czy wioska jest dawcą wg zaznaczonych kryteriów
-	function donorTest(settings) {
+	// Zwraca funkcję sprawdzającą, czy wioska jest dawcą wg zaznaczonych kryteriów.
+	// groupMembers – zbiór id wiosek z wybranej grupy (gdy kryterium grupy jest włączone).
+	function donorTest(settings, groupMembers) {
 		if (!settings.useDonors) { return () => false; }
 		const checks = [];
+		if (settings.donorByGroup) {
+			const members = groupMembers || new Set();
+			checks.push(v => members.has(v.id));
+		}
 		if (settings.donorByStorage) {
-			const minCapacity = capacityForLevel(settings.donorMinLevel);
-			checks.push(v => v.capacity >= minCapacity);
+			checks.push(v => v.capacity >= settings.donorMinCapacity);
 		}
 		if (settings.donorByPoints) {
 			checks.push(v => v.points >= settings.donorMinPoints);
@@ -218,16 +270,20 @@
 			: v => checks.every(c => c(v));
 	}
 
-	function createPlan(villages, settings) {
-		// Bez kryteriów dawców: w trybie „rozdziel” działa samo wyrównywanie nadwyżek,
-		// w trybie „do jednej wioski” nie byłoby skąd brać surowców.
-		if (settings.useDonors && !settings.donorByStorage && !settings.donorByPoints) {
+	const hasCriteria = s => s.donorByGroup || s.donorByStorage || s.donorByPoints;
+
+	function createPlan(villages, settings, groupMembers) {
+		if (settings.useDonors && !hasCriteria(settings)) {
 			throw 'Zaznacz co najmniej jedno kryterium dawcy albo wybierz „Bez dawców – tylko wyrównuj”.';
+		}
+		if (settings.useDonors && settings.donorByGroup && !settings.donorGroupId) {
+			throw 'Wybierz grupę dawców.';
 		}
 		if (!settings.useDonors && settings.mode === 'single') {
 			throw 'Przy „Bez dawców” możliwe jest tylko „Rozdziel do pozostałych wiosek”.';
 		}
-		const isDonor = donorTest(settings);
+		const isDonor = donorTest(settings, groupMembers);
+		const reserve = settings.reserve || [0, 0, 0];
 		const byId = Object.fromEntries(villages.map(v => [v.id, v]));
 		const inRange = (a, b) => settings.maxDistance <= 0 || distance(a.coords, b.coords) <= settings.maxDistance;
 		const sum3 = a => a[0] + a[1] + a[2];
@@ -261,28 +317,26 @@
 		}
 
 		const donors = villages.filter(isDonor);
-		const keep = settings.donorEmpty ? [0, 0, 0] : settings.donorKeep;
-		const spare = Object.fromEntries(donors.map(v => [v.id, v.resources.map((r, i) => Math.max(0, r - keep[i]))]));
+		const spare = Object.fromEntries(donors.map(v => [v.id, v.resources.map((r, i) => Math.max(0, r - settings.donorKeep[i]))]));
 
 		// Surowce w drodze liczą się do wioski docelowej
 		const incomingOf = v => settings.countIncoming ? v.incoming : [0, 0, 0];
 
 		// Źródła surowców:
-		//  priorytet 0 – dawcy (np. spichlerz 30),
-		//  priorytet 1 – pozostałe wioski: nadwyżka ponad to, co mają zostawić (tryb „rozdziel”)
-		//                oraz nadwyżka ponad próg przepełnienia (oba tryby).
+		//  priorytet 0 – dawcy: oddają wszystko ponad „Zostaw w dawcy”,
+		//  priorytet 1 – pozostałe wioski: w trybie „rozdziel” nadwyżka ponad cel, w obu trybach
+		//                nadwyżka ponad próg zapełnienia. Nigdy poniżej „W każdej wiosce zawsze zostaje”.
 		// Wioska nie oddaje więcej, niż fizycznie ma.
 		const sources = donors.map(v => ({ v, prio: 0 }));
-		const balanceKeep = settings.balanceKeep || [0, 0, 0];
 		const targetId = settings.mode === 'single' ? String(settings.targetId) : null;
 		for (const v of villages) {
 			if (isDonor(v) || v.id === targetId) { continue; }
 			const inc = incomingOf(v);
 			const lvl = targetLevel(v);
 			const floor = [0, 1, 2].map(i => {
-				let f = Infinity;
-				if (settings.mode === 'spread') { f = balanceKeep[i] > 0 ? balanceKeep[i] : lvl[i]; }
-				return Math.min(f, overflowAt(v));
+				let f = settings.mode === 'spread' ? lvl[i] : Infinity;
+				f = Math.min(f, overflowAt(v));
+				return f === Infinity ? f : Math.max(f, reserve[i]);
 			});
 			const surplus = [0, 1, 2].map(i => floor[i] === Infinity ? 0
 				: Math.max(0, Math.min(v.resources[i], v.resources[i] + inc[i] - floor[i])));
@@ -367,7 +421,7 @@
 					if (!inRange(D, P) || !inRange(P, R)) { continue; }
 					const st = state[P.id];
 					if (st.traders < needTraders) { continue; }
-					const canLend = [0, 1, 2].every(i => st.present[i] - settings.relayKeep[i] >= t.amounts[i]);
+					const canLend = [0, 1, 2].every(i => st.present[i] - reserve[i] >= t.amounts[i]);
 					if (!canLend) { continue; }
 					best = P;
 					bestDist = legs;
@@ -438,71 +492,76 @@
 	function renderPanel(villages, settings) {
 		$('#' + NS).remove();
 
-		const levels = villages.map(v => v.level);
+		const caps = villages.map(v => v.capacity);
 		const avg = [0, 1, 2].map(i => Math.floor(villages.reduce((sum, v) => sum + v.resources[i] + v.incoming[i], 0) / villages.length));
+		const esc = t => $('<div>').text(t).html();
 
 		const targetOptions = villages
 			.slice()
 			.sort((a, b) => a.name.localeCompare(b.name))
-			.map(v => `<option value="${v.id}" ${v.id === String(settings.targetId) ? 'selected' : ''}>${$('<div>').text(v.name).html()} (${v.coords.x}|${v.coords.y})</option>`)
+			.map(v => `<option value="${v.id}" ${v.id === String(settings.targetId) ? 'selected' : ''}>${esc(v.name)} (${v.coords.x}|${v.coords.y})</option>`)
 			.join('');
+		const groupOptions = (villages.groups || [])
+			.filter(g => g.id !== '0')
+			.map(g => `<option value="${g.id}" ${g.id === String(settings.donorGroupId) ? 'selected' : ''}>${esc(g.name)}</option>`)
+			.join('');
+		const chk = (id, on) => `<input type="checkbox" id="${NS}_${id}" ${on ? 'checked' : ''}>`;
+		const numIn = (id, val, w) => `<input id="${NS}_${id}" type="number" min="0" style="width:${w || 75}px" value="${val}">`;
 
 		const html = `
 		<div id="${NS}" class="vis vis_item" style="margin-bottom:10px;padding:8px">
 			<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small>
 				<a href="#" id="${NS}_toggleSettings" style="font-size:11px;font-weight:normal;margin-left:10px">Ukryj ustawienia</a></h3>
-			<p style="margin:0 0 8px 0">Wiosek: <b>${villages.length}</b>, poziomy spichlerzy: ${Math.min(...levels)}–${Math.max(...levels)}.
+			<p style="margin:0 0 8px 0">Wiosek: <b>${villages.length}</b>, spichlerze: ${fmt(Math.min(...caps))} – ${fmt(Math.max(...caps))}.
 			Transportów w drodze (przychodzących): <b id="${NS}_incomingCount">${villages.incomingCount}</b>.
 			<span id="${NS}_incomingWarning">${villages.incomingWarning ? `<br><b style="color:#c00">Uwaga: ${villages.incomingWarning}.</b>` : ''}</span></p>
 			<table class="vis" style="width:100%" id="${NS}_settings">
-				<tr><th colspan="2">Dawcy</th></tr>
-				<tr><td style="width:260px"><b>Tryb</b></td>
-					<td><label><input type="radio" name="${NS}_useDonors" value="1" ${settings.useDonors ? 'checked' : ''}> <b>Z dawcami</b> – wybrane wioski (np. spichlerz 30) oddają surowce</label><br>
-					<label><input type="radio" name="${NS}_useDonors" value="0" ${!settings.useDonors ? 'checked' : ''}> <b>Bez dawców – tylko wyrównuj</b> (z wiosek z nadmiarem do wiosek z brakiem)</label></td></tr>
-				<tr class="${NS}_donorRow"><td><label><input type="checkbox" id="${NS}_donorByStorage" ${settings.donorByStorage ? 'checked' : ''}> Spichlerz od poziomu</label></td>
-					<td><input id="${NS}_donorMinLevel" type="number" min="1" max="30" style="width:50px" value="${settings.donorMinLevel}"></td></tr>
-				<tr class="${NS}_donorRow"><td><label><input type="checkbox" id="${NS}_donorByPoints" ${settings.donorByPoints ? 'checked' : ''}> Punkty wioski od</label></td>
-					<td><input id="${NS}_donorMinPoints" type="number" min="0" style="width:75px" value="${settings.donorMinPoints}"></td></tr>
-				<tr class="${NS}_donorRow"><td>Wioska musi spełniać</td>
-					<td><label><input type="radio" name="${NS}_donorMatch" value="all" ${settings.donorMatch !== 'any' ? 'checked' : ''}> wszystkie zaznaczone kryteria</label>
-					<label><input type="radio" name="${NS}_donorMatch" value="any" ${settings.donorMatch === 'any' ? 'checked' : ''}> dowolne z nich</label>
+				<tr><th colspan="2">1. Skąd brać – DAWCY</th></tr>
+				<tr><td style="width:260px">Tryb</td>
+					<td><label><input type="radio" name="${NS}_useDonors" value="1" ${settings.useDonors ? 'checked' : ''}> <b>Z dawcami</b> – wybrane wioski oddają surowce</label><br>
+					<label><input type="radio" name="${NS}_useDonors" value="0" ${!settings.useDonors ? 'checked' : ''}> <b>Bez dawców</b> – tylko wyrównuj (z nadmiaru do braku)</label></td></tr>
+				<tr class="${NS}_donorRow"><td>Kto jest dawcą</td>
+					<td><label>${chk('donorByGroup', settings.donorByGroup)} grupa</label>
+					<select id="${NS}_donorGroupId"><option value="">— wybierz —</option>${groupOptions}</select><br>
+					<label>${chk('donorByStorage', settings.donorByStorage)} spichlerz od pojemności</label> ${numIn('donorMinCapacity', settings.donorMinCapacity, 75)}<br>
+					<label>${chk('donorByPoints', settings.donorByPoints)} punkty od</label> ${numIn('donorMinPoints', settings.donorMinPoints, 60)}<br>
+					<select id="${NS}_donorMatch">
+						<option value="all" ${settings.donorMatch !== 'any' ? 'selected' : ''}>muszą być spełnione wszystkie zaznaczone</option>
+						<option value="any" ${settings.donorMatch === 'any' ? 'selected' : ''}>wystarczy jedno z zaznaczonych</option>
+					</select>
 					<br><b id="${NS}_donorCount"></b></td></tr>
-				<tr class="${NS}_donorRow"><td>Ile zabrać z dawcy</td>
-					<td><label><input type="radio" name="${NS}_donorEmpty" value="1" ${settings.donorEmpty ? 'checked' : ''}> wszystko (opróżnij do 0)</label><br>
-					<label><input type="radio" name="${NS}_donorEmpty" value="0" ${!settings.donorEmpty ? 'checked' : ''}> zostaw w dawcy:</label>
-					${resInputs('donorKeep', settings.donorKeep)}</td></tr>
-				<tr><td>Zostaw wolnych kupców w każdej wiosce</td>
-					<td><input id="${NS}_tradersSafeguard" type="number" min="0" style="width:50px" value="${settings.tradersSafeguard}"></td></tr>
+				<tr class="${NS}_donorRow"><td>Zostaw w dawcy<br><small>0 = opróżnij do zera</small></td>
+					<td>${resInputs('donorKeep', settings.donorKeep)}</td></tr>
 
-				<tr><th colspan="2">Odbiorcy</th></tr>
-				<tr><td><label><input type="radio" name="${NS}_mode" value="single" ${settings.mode === 'single' ? 'checked' : ''}> Wszystko do jednej wioski</label></td>
-					<td><select id="${NS}_targetId"><option value="">— wybierz —</option>${targetOptions}</select></td></tr>
-				<tr><td><label><input type="radio" name="${NS}_mode" value="spread" ${settings.mode === 'spread' ? 'checked' : ''}> Rozdziel do pozostałych wiosek</label></td>
-					<td><small>wszystkie wioski, które nie są dawcami</small></td></tr>
+				<tr><th colspan="2">2. Dokąd i ile – ODBIORCY</th></tr>
+				<tr><td>Dokąd</td>
+					<td><label><input type="radio" name="${NS}_mode" value="single" ${settings.mode === 'single' ? 'checked' : ''}> do jednej wioski</label>
+					<select id="${NS}_targetId"><option value="">— wybierz —</option>${targetOptions}</select><br>
+					<label><input type="radio" name="${NS}_mode" value="spread" ${settings.mode === 'spread' ? 'checked' : ''}> rozdziel do pozostałych wiosek</label></td></tr>
 				<tr><td>Uzupełniaj do<br><small>0 = do limitu spichlerza</small></td>
 					<td>${resInputs('fillTo', settings.fillTo)}
 					<br><small>średnio na wioskę masz: ${avg.map(fmt).join(' / ')}</small></td></tr>
 				<tr><td>Najpierw każdemu minimum<br><small>0 = bez minimum</small></td>
 					<td>${resInputs('priorityLevel', settings.priorityLevel)}
-					<br><small>gdy surowców jest mało, każda wioska dostaje najpierw tyle, a dopiero potem reszta</small></td></tr>
+					<br><small>gdy surowców jest mało, każda wioska dostaje najpierw tyle</small></td></tr>
 				<tr><td>Maks. zapełnienie spichlerza</td>
 					<td><input id="${NS}_fillPercent" type="number" min="1" max="100" style="width:50px" value="${settings.fillPercent}"> %
-					<span id="${NS}_fillExample"></span>
-					<br><small>nikt nie dostanie więcej, a wioska zapełniona ponad ten próg oddaje nadwyżkę</small></td></tr>
-				<tr class="${NS}_spreadRow"><td>Wioska z nadmiarem zostawia sobie<br><small>0 = tyle, ile „Uzupełniaj do”</small></td>
-					<td>${resInputs('balanceKeep', settings.balanceKeep)}
-					<br><small>ustaw więcej niż „Uzupełniaj do”, żeby nie przerzucać drobnych różnic</small></td></tr>
-				<tr><td><label><input type="checkbox" id="${NS}_countIncoming" ${settings.countIncoming ? 'checked' : ''}> Doliczaj surowce w drodze</label></td>
-					<td><small>żeby nie wezwać drugi raz tego, co już jedzie</small></td></tr>
-				<tr><td>Maks. odległość</td>
-					<td><input id="${NS}_maxDistance" type="number" min="0" style="width:50px" value="${settings.maxDistance}"> pól <small>(0 = bez limitu)</small></td></tr>
+					<small>nikt nie dostanie więcej; wioska ponad ten próg oddaje nadwyżkę</small></td></tr>
 
-				<tr><th colspan="2">Transporty</th></tr>
-				<tr><td>Minimalny transport (surowce łącznie)<br><small>mniejsze są pomijane, np. 5000</small></td>
-					<td><input id="${NS}_minTransport" type="number" min="0" style="width:75px" value="${settings.minTransport}"></td></tr>
-				<tr><td><label><input type="checkbox" id="${NS}_useRelays" ${settings.useRelays ? 'checked' : ''}> Szybciej przez pośredników</label>
-					<br><small>bliska wioska wysyła od razu do odbiorcy,<br>a daleki dawca uzupełnia ją później</small></td>
-					<td>pośrednik zostawia u siebie co najmniej: ${resInputs('relayKeep', settings.relayKeep)}</td></tr>
+				<tr><th colspan="2">3. Ochrona – W KAŻDEJ WIOSCE ZAWSZE ZOSTAJE</th></tr>
+				<tr><td>Surowce<br><small>wszystkie wioski poza dawcami</small></td>
+					<td>${resInputs('reserve', settings.reserve)}
+					<br><small>żadna wioska (z nadmiarem, przepełniona ani pośrednik) nie zejdzie poniżej tego ani poniżej „Uzupełniaj do”</small></td></tr>
+				<tr><td>Wolni kupcy<br><small>wszystkie wioski, także dawcy</small></td>
+					<td>${numIn('tradersSafeguard', settings.tradersSafeguard, 50)}</td></tr>
+
+				<tr><th colspan="2">4. Transporty</th></tr>
+				<tr><td>Minimalny transport</td>
+					<td>${numIn('minTransport', settings.minTransport, 75)} <small>mniejsze są pomijane</small></td></tr>
+				<tr><td>Pozostałe</td>
+					<td><label>${chk('countIncoming', settings.countIncoming)} doliczaj surowce w drodze</label> &nbsp;
+					<label>${chk('useRelays', settings.useRelays)} szybciej przez pośredników</label> &nbsp;
+					maks. odległość ${numIn('maxDistance', settings.maxDistance, 50)} <small>(0 = bez limitu)</small></td></tr>
 			</table>
 			<div id="${NS}_summary" class="info_box" style="margin-top:8px;padding:6px"></div>
 			<div style="margin-top:8px">
@@ -514,38 +573,35 @@
 
 		$('#content_value').prepend(html);
 
-		const updateDonorCount = () => {
+		let countSeq = 0;
+		const updateDonorCount = async () => {
 			const s = readPanel();
-			const test = donorTest(s);
-			const count = villages.filter(test).length;
-			const info = s.donorByStorage ? ` (spichlerz ≥ ${fmt(capacityForLevel(s.donorMinLevel))})` : '';
-			$('#' + NS + '_donorCount').text(!s.donorByStorage && !s.donorByPoints
-				? '→ zaznacz co najmniej jedno kryterium'
-				: `→ dawców: ${count} z ${villages.length}${info}`);
+			const seq = ++countSeq;
 
-			// „Bez dawców”: wyszarzone pola dawców i wymuszony tryb „Rozdziel”
+			// „Bez dawców”: wyszarzone pola dawców i wymuszony tryb „rozdziel”
 			const off = !s.useDonors;
-			$(`#${NS} tr.${NS}_donorRow`).css('opacity', off ? 0.4 : 1).find('input').prop('disabled', off);
+			$(`#${NS} tr.${NS}_donorRow`).css('opacity', off ? 0.4 : 1).find('input, select').prop('disabled', off);
 			$(`input[name=${NS}_mode][value=single]`).prop('disabled', off);
 			$('#' + NS + '_targetId').prop('disabled', off);
 			if (off) { $(`input[name=${NS}_mode][value=spread]`).prop('checked', true); }
-			// „Zostawiają u siebie” dotyczy tylko trybu „Rozdziel”
-			const spread = $(`input[name=${NS}_mode]:checked`).val() === 'spread';
-			$(`#${NS} tr.${NS}_spreadRow`).toggle(spread);
-			$('#' + NS + '_summary').html(describe(s));
-		};
-		$('#' + NS).on('input change', `#${NS}_donorByStorage, #${NS}_donorMinLevel, #${NS}_donorByPoints, #${NS}_donorMinPoints, input[name=${NS}_donorMatch], input[name=${NS}_mode], input[name=${NS}_useDonors], #${NS}_settings input, #${NS}_settings select`, updateDonorCount);
-		updateDonorCount();
+			$('#' + NS + '_summary').html(describe(readPanel(), villages));
 
-		// Podgląd: do ilu realnie zostanie dopełniony najmniejszy i największy spichlerz
-		const updateFillExample = () => {
-			const pct = Math.min(100, Math.max(1, Number($('#' + NS + '_fillPercent').val()) || 0));
-			const caps = villages.map(v => v.capacity);
-			const ex = cap => fmt(Math.floor(cap * pct / 100));
-			$('#' + NS + '_fillExample').text(` → najmniejszy spichlerz: maks. ${ex(Math.min(...caps))}, największy: maks. ${ex(Math.max(...caps))} na surowiec`);
+			if (off) { $('#' + NS + '_donorCount').text(''); return; }
+			if (!hasCriteria(s)) { $('#' + NS + '_donorCount').text('→ zaznacz co najmniej jedno kryterium'); return; }
+			if (s.donorByGroup && !s.donorGroupId) { $('#' + NS + '_donorCount').text('→ wybierz grupę'); return; }
+
+			let members = null;
+			if (s.donorByGroup) {
+				$('#' + NS + '_donorCount').text('→ wczytywanie grupy…');
+				try { members = await loadGroupMembers(s.donorGroupId, villages.activeGroupId, false); }
+				catch (e) { if (seq === countSeq) { $('#' + NS + '_donorCount').text('→ nie udało się wczytać grupy'); } return; }
+			}
+			if (seq !== countSeq) { return; } // w międzyczasie zmieniono ustawienia
+			const count = villages.filter(donorTest(s, members)).length;
+			$('#' + NS + '_donorCount').text(`→ dawców: ${count} z ${villages.length}`);
 		};
-		$('#' + NS + '_fillPercent').on('input', updateFillExample);
-		updateFillExample();
+		$('#' + NS).on('input change', `#${NS}_settings input, #${NS}_settings select`, updateDonorCount);
+		updateDonorCount();
 
 		$('#' + NS + '_toggleSettings').on('click', function (e) {
 			e.preventDefault();
@@ -566,11 +622,15 @@
 			try {
 				const s = readPanel();
 				storageSet('settings', s);
+				$('#' + NS + '_summary').html(describe(s, villages));
 				// Zawsze świeże dane: surowce, kupcy i transporty w drodze z chwili kliknięcia
 				const fresh = await fetchVillages();
 				$('#' + NS + '_incomingCount').text(fresh.incomingCount);
 				$('#' + NS + '_incomingWarning').html(fresh.incomingWarning ? `<br><b style="color:#c00">Uwaga: ${fresh.incomingWarning}.</b>` : '');
-				const summons = createPlan(fresh, s);
+				const members = (s.useDonors && s.donorByGroup && s.donorGroupId)
+					? await loadGroupMembers(s.donorGroupId, fresh.activeGroupId, true)
+					: null;
+				const summons = createPlan(fresh, s, members);
 				renderPlan(summons, fresh);
 				const now = new Date();
 				$('#' + NS + '_plan').prepend(`<small>Dane z godziny ${now.toLocaleTimeString('pl-PL')}.</small>`);
@@ -582,7 +642,7 @@
 					$('#' + NS + '_toggleSettings').text('Pokaż ustawienia');
 					$('#' + NS + '_execute').removeClass('btn-disabled');
 				} else {
-					$('#' + NS + '_plan').append(diagnose(fresh, s));
+					$('#' + NS + '_plan').append(diagnose(fresh, s, members));
 				}
 			} catch (ex) {
 				$('#' + NS + '_plan').html('');
@@ -600,11 +660,11 @@
 	}
 
 	// Wyjaśnienie „Brak transportów”: co skrypt widzi u odbiorców i dawców
-	function diagnose(villages, s) {
-		const isDonor = donorTest(s);
+	function diagnose(villages, s, members) {
+		const isDonor = donorTest(s, members);
 		const esc = t => $('<div>').text(t).html();
 		const sum3 = a => a[0] + a[1] + a[2];
-		const keep = s.donorEmpty ? [0, 0, 0] : s.donorKeep;
+		const keep = s.donorKeep;
 		const level = v => [0, 1, 2].map(i => {
 			const over = s.fillPercent < 100 ? Math.floor(v.capacity * s.fillPercent / 100) : Infinity;
 			const byPercent = Math.min(Math.floor(v.capacity * s.fillPercent / 100), over);
@@ -631,7 +691,7 @@
 	}
 
 	// Opis ustawień zwykłymi słowami – pokazywany nad przyciskami
-	function describe(s) {
+	function describe(s, villages) {
 		const r3 = a => a.map(fmt).join(' / ');
 		const set = a => a.some(x => x > 0);
 		const lines = [];
@@ -639,24 +699,29 @@
 			lines.push('Bez dawców: surowce przechodzą z wiosek z nadmiarem do wiosek z brakiem.');
 		} else {
 			const crit = [];
-			if (s.donorByStorage) { crit.push(`spichlerz od poziomu ${s.donorMinLevel}`); }
+			if (s.donorByGroup) {
+				const g = ((villages && villages.groups) || []).find(x => x.id === String(s.donorGroupId));
+				crit.push(g ? `grupa [${g.name}]` : 'grupa (nie wybrano)');
+			}
+			if (s.donorByStorage) { crit.push(`spichlerz od ${fmt(s.donorMinCapacity)}`); }
 			if (s.donorByPoints) { crit.push(`od ${fmt(s.donorMinPoints)} pkt`); }
 			lines.push(`Dawcy (${crit.join(s.donorMatch === 'any' ? ' lub ' : ' i ') || 'brak kryteriów'}) oddają ` +
-				(s.donorEmpty ? 'wszystko.' : `wszystko ponad ${r3(s.donorKeep)}.`));
+				(set(s.donorKeep) ? `wszystko ponad ${r3(s.donorKeep)}.` : '<b>wszystko</b>.'));
 		}
-		const target = s.fillTo.some(x => x > 0) ? `do ${r3(s.fillTo)}` : 'do limitu spichlerza';
+		const target = set(s.fillTo) ? `do <b>${r3(s.fillTo)}</b>` : 'do limitu spichlerza';
 		lines.push((s.mode === 'single' ? 'Wszystko trafia do wybranej wioski, ' : 'Pozostałe wioski są uzupełniane ') +
 			`${target}, maks. do ${s.fillPercent}% spichlerza.`);
-		if (set(s.priorityLevel)) { lines.push(`Najpierw każdy odbiorca dostaje minimum ${r3(s.priorityLevel)}.`); }
-		if (s.fillPercent < 100) { lines.push(`Wioski zapełnione ponad ${s.fillPercent}% oddają nadwyżkę.`); }
-		if (s.mode === 'spread') {
-			lines.push(set(s.balanceKeep)
-				? `Wioski z nadmiarem oddają wszystko ponad ${r3(s.balanceKeep)}.`
-				: 'Wioski z nadmiarem oddają wszystko ponad cel.');
+		if (set(s.priorityLevel)) { lines.push(`Najpierw każda dostaje minimum ${r3(s.priorityLevel)}.`); }
+		const givers = [];
+		if (s.mode === 'spread') { givers.push('z nadmiarem'); }
+		if (s.fillPercent < 100) { givers.push(`zapełnione ponad ${s.fillPercent}%`); }
+		if (givers.length) {
+			lines.push(`Wioski ${givers.join(' i ')} oddają nadwyżkę` +
+				(set(s.reserve) ? `, ale zawsze zostaje w nich co najmniej <b>${r3(s.reserve)}</b>.` : '.'));
 		}
+		if (s.tradersSafeguard > 0) { lines.push(`W każdej wiosce (także w dawcach) zostaje ${s.tradersSafeguard} wolnych kupców.`); }
 		if (s.minTransport > 0) { lines.push(`Transporty mniejsze niż ${fmt(s.minTransport)} są pomijane.`); }
-		if (s.tradersSafeguard > 0) { lines.push(`W każdej wiosce zostaje ${s.tradersSafeguard} wolnych kupców.`); }
-		return `<b>Co zrobi plan:</b><br>${lines.join('<br>')}`;
+		return `<b>Co zrobi plan:</b><br>• ${lines.join('<br>• ')}`;
 	}
 
 	function readPanel() {
@@ -664,25 +729,25 @@
 		const arr = id => [0, 1, 2].map(i => num(id + '_' + i));
 		const s = {
 			useDonors: $(`input[name=${NS}_useDonors]:checked`).val() !== '0',
+			donorByGroup: $('#' + NS + '_donorByGroup').is(':checked'),
+			donorGroupId: String($('#' + NS + '_donorGroupId').val() || ''),
 			donorByStorage: $('#' + NS + '_donorByStorage').is(':checked'),
-			donorMinLevel: Math.min(30, Math.max(1, num('donorMinLevel'))),
+			donorMinCapacity: num('donorMinCapacity'),
 			donorByPoints: $('#' + NS + '_donorByPoints').is(':checked'),
 			donorMinPoints: num('donorMinPoints'),
-			donorMatch: $(`input[name=${NS}_donorMatch]:checked`).val() === 'any' ? 'any' : 'all',
-			donorEmpty: $(`input[name=${NS}_donorEmpty]:checked`).val() !== '0',
+			donorMatch: $('#' + NS + '_donorMatch').val() === 'any' ? 'any' : 'all',
 			donorKeep: arr('donorKeep'),
-			balanceKeep: arr('balanceKeep'),
-			priorityLevel: arr('priorityLevel'),
-			tradersSafeguard: num('tradersSafeguard'),
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'single',
 			targetId: String($('#' + NS + '_targetId').val() || ''),
 			fillTo: arr('fillTo'),
+			priorityLevel: arr('priorityLevel'),
 			fillPercent: Math.min(100, Math.max(1, num('fillPercent'))),
-			maxDistance: num('maxDistance'),
+			reserve: arr('reserve'),
+			tradersSafeguard: num('tradersSafeguard'),
 			minTransport: num('minTransport'),
+			countIncoming: $('#' + NS + '_countIncoming').is(':checked'),
 			useRelays: $('#' + NS + '_useRelays').is(':checked'),
-			relayKeep: arr('relayKeep'),
-			countIncoming: $('#' + NS + '_countIncoming').is(':checked')
+			maxDistance: num('maxDistance')
 		};
 		return s;
 	}
