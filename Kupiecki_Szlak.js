@@ -10,13 +10,13 @@
  */
 
 /*
- * Kupiecki Szlak v3.2.5
+ * Kupiecki Szlak v3.3.0
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
  *          (Uruchomiony na innym ekranie bez planu – przenosi do Przeglądy > Produkcja.)
  *          Skrypt sprawdza wszystkie wioski z aktywnej grupy i opracowuje plan:
- *          wioski-dawcy (wybrane wg grupy, pojemności spichlerza lub punktów) oddają surowce,
+ *          wioski-dawcy (wybrane wg pojemności spichlerza lub punktów) oddają surowce,
  *          a surowce trafiają do wybranej wioski albo do pozostałych wiosek. Możliwe jest też
  *          samo wyrównywanie surowców między wioskami (bez dawców).
  * KROK 2 – „Wykonaj plan” przenosi na Rynek > Wezwij. Kliknij skrypt – wypełni formularz,
@@ -46,7 +46,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.2.5';
+	const VERSION = 'v3.3.0';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -56,8 +56,6 @@
 	const DEFAULTS = {
 		// 1. Dawcy
 		useDonors: true,             // false – bez dawców, tylko wyrównywanie nadwyżek między wioskami
-		donorByGroup: false,         // kryterium: wioska należy do grupy
-		donorGroupId: '',            //   id grupy
 		donorByStorage: true,        // kryterium: pojemność spichlerza
 		donorMinCapacity: 400000,    //   od tej pojemności (400 000 = poziom 30)
 		donorByPoints: false,        // kryterium: punkty wioski
@@ -194,45 +192,9 @@
 		return { incoming, count, unknown };
 	}
 
-	// Lista grup z menu „Grupy:” na stronie przeglądu; current = aktualnie wybrana grupa
-	function parseGroups(html) {
-		const doc = $('<div>').append($.parseHTML(html));
-		const groups = [];
-		doc.find('.group-menu-item').each(function () {
-			const id = String($(this).attr('data-group-id') || '');
-			if (!id) { return; }
-			const name = $(this).text().trim().replace(/^[\[>]+|[\]<]+$/g, '').trim();
-			groups.push({ id, name, current: this.tagName.toLowerCase() === 'strong' });
-		});
-		return groups;
-	}
-
-	// Skład grupy dawców. Gra pamięta ostatnio wybraną grupę, więc po odczycie
-	// przywracamy grupę, którą gracz miał wybraną.
-	const groupCache = {};
-	let groupLoading = Promise.resolve();
-	function loadGroupMembers(groupId, activeGroupId, force) {
-		groupLoading = groupLoading.catch(() => {}).then(async () => {
-			if (!force && groupCache[groupId]) { return groupCache[groupId]; }
-			try {
-				const html = await $.get('/game.php?screen=overview_villages&mode=prod&page=-1&group=' + groupId + sitterParam());
-				groupCache[groupId] = new Set(parseProduction(html, true).map(v => v.id));
-			} finally {
-				if (String(activeGroupId) !== String(groupId)) {
-					await $.get('/game.php?screen=overview_villages&mode=prod&group=' + activeGroupId + sitterParam()).catch(() => {});
-				}
-			}
-			return groupCache[groupId];
-		});
-		return groupLoading;
-	}
-
 	async function fetchVillages() {
 		const html = await $.get('/game.php?screen=overview_villages&mode=prod&page=-1' + sitterParam());
 		const villages = parseProduction(html);
-		villages.groups = parseGroups(html);
-		const active = villages.groups.find(g => g.current);
-		villages.activeGroupId = active ? active.id : String(game_data.group_id || '0');
 
 		// Pobierane zawsze – checkbox w panelu decyduje tylko, czy są liczone.
 		// Błąd odczytu nie blokuje skryptu, ale jest wyraźnie pokazany w panelu.
@@ -255,14 +217,9 @@
 	// ---------- Planowanie ----------
 
 	// Zwraca funkcję sprawdzającą, czy wioska jest dawcą wg zaznaczonych kryteriów.
-	// groupMembers – zbiór id wiosek z wybranej grupy (gdy kryterium grupy jest włączone).
-	function donorTest(settings, groupMembers) {
+	function donorTest(settings) {
 		if (!settings.useDonors) { return () => false; }
 		const checks = [];
-		if (settings.donorByGroup) {
-			const members = groupMembers || new Set();
-			checks.push(v => members.has(v.id));
-		}
 		if (settings.donorByStorage) {
 			checks.push(v => v.capacity >= settings.donorMinCapacity);
 		}
@@ -275,16 +232,13 @@
 			: v => checks.every(c => c(v));
 	}
 
-	const hasCriteria = s => s.donorByGroup || s.donorByStorage || s.donorByPoints;
+	const hasCriteria = s => s.donorByStorage || s.donorByPoints;
 
 
 
-	function createPlan(villages, settings, groupMembers) {
+	function createPlan(villages, settings) {
 		if (settings.useDonors && !hasCriteria(settings)) {
 			throw 'Zaznacz co najmniej jedno kryterium dawcy albo wybierz „Bez dawców – tylko wyrównuj”.';
-		}
-		if (settings.useDonors && settings.donorByGroup && !settings.donorGroupId) {
-			throw 'Wybierz grupę dawców.';
 		}
 		if (!settings.fillTo.some(x => x > 0)) {
 			throw 'Wpisz, do ilu uzupełniać („Uzupełniaj do”) – albo kliknij „wstaw średnią” lub „do pełna”.';
@@ -292,7 +246,7 @@
 		if (!settings.useDonors && settings.mode === 'single') {
 			throw 'Przy „Bez dawców” możliwe jest tylko „rozdziel po wioskach”.';
 		}
-		const isDonor = donorTest(settings, groupMembers);
+		const isDonor = donorTest(settings);
 		const reserve = settings.reserve || [0, 0, 0];
 		const byId = Object.fromEntries(villages.map(v => [v.id, v]));
 		const inRange = (a, b) => settings.maxDistance <= 0 || distance(a.coords, b.coords) <= settings.maxDistance;
@@ -464,7 +418,7 @@
 	}
 
 	function savePlan(summons) {
-		storageSet('plan', { timestamp: Date.now(), group: String(game_data.group_id || ''), summons });
+		storageSet('plan', { timestamp: Date.now(), summons });
 	}
 
 	let planExpired = false;
@@ -484,7 +438,6 @@
 
 	function callUrl(plan) {
 		let url = '/game.php?village=' + plan.summons[0].destination + '&screen=market&mode=call' + sitterParam();
-		if (plan.group) { url += '&group=' + plan.group; }
 		return url;
 	}
 
@@ -527,10 +480,6 @@
 			.sort((a, b) => a.name.localeCompare(b.name))
 			.map(v => `<option value="${v.id}" ${v.id === String(settings.targetId) ? 'selected' : ''}>${esc(v.name)} (${v.coords.x}|${v.coords.y})</option>`)
 			.join('');
-		const groupOptions = (villages.groups || [])
-			.filter(g => g.id !== '0')
-			.map(g => `<option value="${g.id}" ${g.id === String(settings.donorGroupId) ? 'selected' : ''}>${esc(g.name)}</option>`)
-			.join('');
 		const chk = (id, on) => `<input type="checkbox" id="${NS}_${id}" ${on ? 'checked' : ''}>`;
 		const numIn = (id, val, w) => `<input id="${NS}_${id}" type="number" min="0" style="width:${w || 75}px" value="${val}">`;
 
@@ -547,9 +496,7 @@
 					<td><label><input type="radio" name="${NS}_useDonors" value="1" ${settings.useDonors ? 'checked' : ''}> <b>Z dawcami</b> – wybrane wioski oddają surowce</label><br>
 					<label><input type="radio" name="${NS}_useDonors" value="0" ${!settings.useDonors ? 'checked' : ''}> <b>Bez dawców</b> – tylko wyrównuj (z nadmiaru do braku)</label></td></tr>
 				<tr class="${NS}_donorRow"><td>Kto jest dawcą</td>
-					<td><label>${chk('donorByGroup', settings.donorByGroup)} grupa</label>
-					<select id="${NS}_donorGroupId"><option value="">— wybierz —</option>${groupOptions}</select><br>
-					<label>${chk('donorByStorage', settings.donorByStorage)} spichlerz od pojemności</label> ${numIn('donorMinCapacity', settings.donorMinCapacity, 75)}<br>
+					<td>					<label>${chk('donorByStorage', settings.donorByStorage)} spichlerz od pojemności</label> ${numIn('donorMinCapacity', settings.donorMinCapacity, 75)}<br>
 					<label>${chk('donorByPoints', settings.donorByPoints)} punkty od</label> ${numIn('donorMinPoints', settings.donorMinPoints, 60)}<br>
 					<select id="${NS}_donorMatch">
 						<option value="all" ${settings.donorMatch !== 'any' ? 'selected' : ''}>muszą być spełnione wszystkie zaznaczone</option>
@@ -633,16 +580,8 @@
 
 			if (off) { $('#' + NS + '_donorCount').text(''); return; }
 			if (!hasCriteria(s)) { $('#' + NS + '_donorCount').text('→ zaznacz co najmniej jedno kryterium'); return; }
-			if (s.donorByGroup && !s.donorGroupId) { $('#' + NS + '_donorCount').text('→ wybierz grupę'); return; }
-
-			let members = null;
-			if (s.donorByGroup) {
-				$('#' + NS + '_donorCount').text('→ wczytywanie grupy…');
-				try { members = await loadGroupMembers(s.donorGroupId, villages.activeGroupId, false); }
-				catch (e) { if (seq === countSeq) { $('#' + NS + '_donorCount').text('→ nie udało się wczytać grupy'); } return; }
-			}
 			if (seq !== countSeq) { return; } // w międzyczasie zmieniono ustawienia
-			const count = villages.filter(donorTest(s, members)).length;
+			const count = villages.filter(donorTest(s)).length;
 			$('#' + NS + '_donorCount').text(`→ dawców: ${count} z ${villages.length}`);
 		};
 		$('#' + NS).on('input change', `#${NS}_settings input, #${NS}_settings select`, updateDonorCount);
@@ -691,9 +630,6 @@
 				const fresh = await fetchVillages();
 				$('#' + NS + '_incomingCount').text(fresh.incomingCount);
 				$('#' + NS + '_incomingWarning').html(fresh.incomingWarning ? `<br><b style="color:#c00">Uwaga: ${fresh.incomingWarning}.</b>` : '');
-				const members = (s.useDonors && s.donorByGroup && s.donorGroupId)
-					? await loadGroupMembers(s.donorGroupId, fresh.activeGroupId, true)
-					: null;
 				if (s.fillToMode === 'avg' || s.fillToMode === 'full') {
 					// średnia / do pełna z aktualnych danych (surowce i spichlerze mogły się zmienić)
 					s.fillTo = autoFillTo(fresh, s.fillToMode);
@@ -703,7 +639,7 @@
 					storageSet('settings', s);
 					$('#' + NS + '_summary').html(describe(s, fresh));
 				}
-				const summons = createPlan(fresh, s, members);
+				const summons = createPlan(fresh, s);
 				renderPlan(summons, fresh);
 				const now = new Date();
 				$('#' + NS + '_plan').prepend(`<small>Dane z godziny ${now.toLocaleTimeString('pl-PL')}.</small>`);
@@ -715,7 +651,7 @@
 					$('#' + NS + '_toggleSettings').text('Pokaż ustawienia');
 					$('#' + NS + '_execute').removeClass('btn-disabled');
 				} else {
-					$('#' + NS + '_plan').append(diagnose(fresh, s, members));
+					$('#' + NS + '_plan').append(diagnose(fresh, s));
 				}
 			} catch (ex) {
 				$('#' + NS + '_plan').html('');
@@ -733,8 +669,8 @@
 	}
 
 	// Wyjaśnienie „Brak transportów”: co skrypt widzi u odbiorców i dawców
-	function diagnose(villages, s, members) {
-		const isDonor = donorTest(s, members);
+	function diagnose(villages, s) {
+		const isDonor = donorTest(s);
 		const esc = t => $('<div>').text(t).html();
 		const sum3 = a => a[0] + a[1] + a[2];
 		const keep = s.donorKeep;
@@ -796,10 +732,6 @@
 			lines.push('Bez dawców: surowce przechodzą z wiosek z nadmiarem do wiosek z brakiem.');
 		} else {
 			const crit = [];
-			if (s.donorByGroup) {
-				const g = ((villages && villages.groups) || []).find(x => x.id === String(s.donorGroupId));
-				crit.push(g ? `grupa [${g.name}]` : 'grupa (nie wybrano)');
-			}
 			if (s.donorByStorage) { crit.push(`spichlerz od ${fmt(s.donorMinCapacity)}`); }
 			if (s.donorByPoints) { crit.push(`od ${fmt(s.donorMinPoints)} pkt`); }
 			lines.push(`Dawcy (${crit.join(s.donorMatch === 'any' ? ' lub ' : ' i ') || 'brak kryteriów'}) oddają ` +
@@ -837,8 +769,6 @@
 		const arr = id => [0, 1, 2].map(i => num(id + '_' + i));
 		const s = {
 			useDonors: $(`input[name=${NS}_useDonors]:checked`).val() !== '0',
-			donorByGroup: $('#' + NS + '_donorByGroup').is(':checked'),
-			donorGroupId: String($('#' + NS + '_donorGroupId').val() || ''),
 			donorByStorage: $('#' + NS + '_donorByStorage').is(':checked'),
 			donorMinCapacity: num('donorMinCapacity'),
 			donorByPoints: $('#' + NS + '_donorByPoints').is(':checked'),
