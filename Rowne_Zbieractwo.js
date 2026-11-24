@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v1.0.7
+ * Równe Zbieractwo v1.0.8
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -28,7 +28,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.7';
+	const VERSION = 'v1.0.8';
 	const NS = 'RowneZbieractwo';
 	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
@@ -360,91 +360,98 @@
 
 	// ---------- Start ----------
 
-	if (!(game_data.screen === 'place' && game_data.mode === 'scavenge_mass')) {
-		location.href = '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass' + sitterParam();
-		return;
-	}
-	// Drugie kliknięcie chowa panel – ale podwójne uruchomienie tuż po otwarciu (np. skrót wykonany dwa razy) jest ignorowane
-	if ($('#' + NS).length) {
-		if (Date.now() - ($('#' + NS).data('opened') || 0) > 1500) { $('#' + NS).remove(); }
-		return;
-	}
-	if (!$('#content_value').length) { notify(NAME + ': nie znaleziono treści strony – włącz wersję gry na komputer.'); return; }
-
-	const settings = loadSettings();
-	renderPanel(settings);
-	$('#' + NS).data('opened', Date.now());
-
-	let plan = null;
-	let planTime = 0;
-	let queue = [];
-	let busy = false;
-	let sentBatches = 0;
-
-	$('#' + NS + '_calc').on('click', async () => {
-		if (busy) { return; }
-		busy = true;
-		queue = [];
-		sentBatches = 0; // nowy plan – numeracja partii od początku
-		$('#' + NS + '_send').addClass('btn-disabled').val('Wyślij partię');
-		$('#' + NS + '_plan').html('<i>Pobieranie aktualnych wojsk ze wszystkich stron…</i>');
-		try {
-			const s = readPanel();
-			storageSet('settings', s);
-			const data = await fetchAll();
-			plan = createPlan(data, s);
-			planTime = Date.now();
-			renderPlan(plan, data);
-			const withSquads = plan.filter(p => p.squads.length);
-			for (let i = 0; i < withSquads.length; i += BATCH_VILLAGES) { queue.push(withSquads.slice(i, i + BATCH_VILLAGES)); }
-			if (queue.length) {
-				$('#' + NS + '_send').removeClass('btn-disabled').val(`Wyślij partię 1/${queue.length}`);
-			}
-		} catch (ex) {
-			$('#' + NS + '_plan').html('');
-			notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się pobrać danych z gry – spróbuj ponownie.'));
-		} finally {
-			busy = false;
-		}
-	});
-
-	$('#' + NS + '_send').on('click', async function () {
-		if (busy || !queue.length) { return; }
-		if (Date.now() - planTime > PLAN_TTL) {
-			queue = [];
-			$(this).addClass('btn-disabled').val('Wyślij partię');
-			notify(NAME + ': plan ma ponad 10 minut – kliknij „Oblicz plan” jeszcze raz.');
+	try {
+		console.log(NAME + ' ' + VERSION + ': start', game_data.screen, game_data.mode);
+		if (!(game_data.screen === 'place' && game_data.mode === 'scavenge_mass')) {
+			location.href = '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass' + sitterParam();
 			return;
 		}
-		busy = true;
-		$(this).addClass('btn-disabled');
-		const total = sentBatches + queue.length;
-		const batch = queue.shift();
-		try {
-			const { response, count } = await sendBatch(batch);
-			sentBatches++;
-			const r = (response && response.squad_responses) ? response : (response && response.response) || {};
-			const results = r.squad_responses || [];
-			const failed = results.filter(x => !x.success);
-			let msg = `${NAME}: partia ${sentBatches}/${total} – wysłano ${count - failed.length} z ${count} oddziałów.`;
-			if (failed.length) {
-				const reasons = [...new Set(failed.map(x => x.error).filter(Boolean))];
-				msg += `<br>Nie wysłano ${failed.length}` + (reasons.length ? ': ' + reasons.map(esc).join('; ') : '') +
-					' (np. wojska zmieniły się od obliczenia planu).';
-			}
-			if (r.invalid_village_ids && r.invalid_village_ids.length) { msg += `<br>Pominięte wioski: ${r.invalid_village_ids.length}.`; }
-			msg += queue.length ? ' Kliknij „Wyślij partię” dla następnej.' : ' To była ostatnia partia – odśwież stronę.';
-			notify(msg, failed.length ? 'ErrorMessage' : 'SuccessMessage');
-		} catch (ex) {
-			queue.unshift(batch); // nie wysłano – partia zostaje do ponownej próby
-			notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'błąd wysyłki') + '. Spróbuj ponownie albo przelicz plan.');
-		} finally {
-			busy = false;
-			if (queue.length) {
-				$(this).removeClass('btn-disabled').val(`Wyślij partię ${sentBatches + 1}/${sentBatches + queue.length}`);
-			} else {
-				$(this).val('Wysłano wszystko');
-			}
+		// Drugie kliknięcie chowa panel – ale podwójne uruchomienie tuż po otwarciu (np. skrót wykonany dwa razy) jest ignorowane
+		if ($('#' + NS).length) {
+			if (Date.now() - ($('#' + NS).data('opened') || 0) > 1500) { $('#' + NS).remove(); }
+			return;
 		}
-	});
+		if (!$('#content_value').length) { notify(NAME + ': nie znaleziono treści strony – włącz wersję gry na komputer.'); return; }
+
+		const settings = loadSettings();
+		renderPanel(settings);
+		$('#' + NS).data('opened', Date.now());
+
+		let plan = null;
+		let planTime = 0;
+		let queue = [];
+		let busy = false;
+		let sentBatches = 0;
+
+		$('#' + NS + '_calc').on('click', async () => {
+			if (busy) { return; }
+			busy = true;
+			queue = [];
+			sentBatches = 0; // nowy plan – numeracja partii od początku
+			$('#' + NS + '_send').addClass('btn-disabled').val('Wyślij partię');
+			$('#' + NS + '_plan').html('<i>Pobieranie aktualnych wojsk ze wszystkich stron…</i>');
+			try {
+				const s = readPanel();
+				storageSet('settings', s);
+				const data = await fetchAll();
+				plan = createPlan(data, s);
+				planTime = Date.now();
+				renderPlan(plan, data);
+				const withSquads = plan.filter(p => p.squads.length);
+				for (let i = 0; i < withSquads.length; i += BATCH_VILLAGES) { queue.push(withSquads.slice(i, i + BATCH_VILLAGES)); }
+				if (queue.length) {
+					$('#' + NS + '_send').removeClass('btn-disabled').val(`Wyślij partię 1/${queue.length}`);
+				}
+			} catch (ex) {
+				$('#' + NS + '_plan').html('');
+				notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'nie udało się pobrać danych z gry – spróbuj ponownie.'));
+			} finally {
+				busy = false;
+			}
+		});
+
+		$('#' + NS + '_send').on('click', async function () {
+			if (busy || !queue.length) { return; }
+			if (Date.now() - planTime > PLAN_TTL) {
+				queue = [];
+				$(this).addClass('btn-disabled').val('Wyślij partię');
+				notify(NAME + ': plan ma ponad 10 minut – kliknij „Oblicz plan” jeszcze raz.');
+				return;
+			}
+			busy = true;
+			$(this).addClass('btn-disabled');
+			const total = sentBatches + queue.length;
+			const batch = queue.shift();
+			try {
+				const { response, count } = await sendBatch(batch);
+				sentBatches++;
+				const r = (response && response.squad_responses) ? response : (response && response.response) || {};
+				const results = r.squad_responses || [];
+				const failed = results.filter(x => !x.success);
+				let msg = `${NAME}: partia ${sentBatches}/${total} – wysłano ${count - failed.length} z ${count} oddziałów.`;
+				if (failed.length) {
+					const reasons = [...new Set(failed.map(x => x.error).filter(Boolean))];
+					msg += `<br>Nie wysłano ${failed.length}` + (reasons.length ? ': ' + reasons.map(esc).join('; ') : '') +
+						' (np. wojska zmieniły się od obliczenia planu).';
+				}
+				if (r.invalid_village_ids && r.invalid_village_ids.length) { msg += `<br>Pominięte wioski: ${r.invalid_village_ids.length}.`; }
+				msg += queue.length ? ' Kliknij „Wyślij partię” dla następnej.' : ' To była ostatnia partia – odśwież stronę.';
+				notify(msg, failed.length ? 'ErrorMessage' : 'SuccessMessage');
+			} catch (ex) {
+				queue.unshift(batch); // nie wysłano – partia zostaje do ponownej próby
+				notify(NAME + ': ' + (typeof ex === 'string' ? ex : 'błąd wysyłki') + '. Spróbuj ponownie albo przelicz plan.');
+			} finally {
+				busy = false;
+				if (queue.length) {
+					$(this).removeClass('btn-disabled').val(`Wyślij partię ${sentBatches + 1}/${sentBatches + queue.length}`);
+				} else {
+					$(this).val('Wysłano wszystko');
+				}
+			}
+		});
+	} catch (ex) {
+		// każdy błąd widoczny na ekranie, a nie tylko w konsoli
+		notify(NAME + ' ' + VERSION + ': błąd – ' + (ex && ex.message ? ex.message : ex));
+		console.error(NAME, ex);
+	}
 })();
