@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v1.0.8
+ * Równe Zbieractwo v1.0.9
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -28,7 +28,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v1.0.8';
+	const VERSION = 'v1.0.9';
 	const NS = 'RowneZbieractwo';
 	const BATCH_VILLAGES = 50;          // tyle wiosek, ile gra pokazuje na jednej stronie Zbieractwa masowego
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
@@ -362,7 +362,10 @@
 
 	try {
 		console.log(NAME + ' ' + VERSION + ': start', game_data.screen, game_data.mode);
-		if (!(game_data.screen === 'place' && game_data.mode === 'scavenge_mass')) {
+		// Gra potrafi wyzerować game_data.mode w tle (np. okienko grup), więc ekran rozpoznajemy też po adresie i treści strony
+		const onMassScreen = game_data.screen === 'place' && (game_data.mode === 'scavenge_mass' ||
+			/[?&]mode=scavenge_mass(&|$)/.test(location.href) || $('#scavenge_mass_screen').length > 0);
+		if (!onMassScreen) {
 			location.href = '/game.php?village=' + game_data.village.id + '&screen=place&mode=scavenge_mass' + sitterParam();
 			return;
 		}
