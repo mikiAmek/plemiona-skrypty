@@ -1,5 +1,5 @@
 /*
- * Kupiecki Szlak v3.3.1
+ * Kupiecki Szlak v3.3.2
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -34,7 +34,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.3.1';
+	const VERSION = 'v3.3.2';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -94,18 +94,14 @@
 	// ---------- Ustawienia ----------
 
 	function loadSettings() {
+		// Ustawienia wyłącznie z panelu (zapisane w przeglądarce) – bez konfiguracji w kodzie
 		const settings = JSON.parse(JSON.stringify(DEFAULTS));
-		const sources = [
-			(typeof KupieckiSzlak !== 'undefined') ? KupieckiSzlak : {},
-			storageGet('settings') || {}   // ostatnio użyte w panelu mają pierwszeństwo
-		];
-		for (const src of sources) {
-			for (const key of Object.keys(src)) {
-				if (!(key in DEFAULTS)) { continue; }
-				if (typeof src[key] !== typeof DEFAULTS[key]) { continue; }
-				if (Array.isArray(DEFAULTS[key]) && (!Array.isArray(src[key]) || src[key].length !== 3)) { continue; }
-				settings[key] = src[key];
-			}
+		const saved = storageGet('settings') || {};
+		for (const key of Object.keys(saved)) {
+			if (!(key in DEFAULTS)) { continue; }
+			if (typeof saved[key] !== typeof DEFAULTS[key]) { continue; }
+			if (Array.isArray(DEFAULTS[key]) && (!Array.isArray(saved[key]) || saved[key].length !== 3)) { continue; }
+			settings[key] = saved[key];
 		}
 		return settings;
 	}
@@ -332,12 +328,12 @@
 				for (const d of candidates) {
 					if (sum3(lack) <= 0) { break; }
 					const st = state[d.id];
-					let carry = st.traders * MERCHANT_CAPACITY;
-					const amounts = [0, 1, 2].map(i => {
-						const take = Math.min(lack[i], spare[d.id][i], carry);
-						carry -= take;
-						return take;
-					});
+					// Gdy kupców nie starcza na całość, każdy surowiec dostaje tę samą część ładowności,
+					// żeby najbliższe źródło nie wysyłało samego drewna (a glina i żelazo z dalszych wiosek)
+					const want = [0, 1, 2].map(i => Math.min(lack[i], spare[d.id][i]));
+					const carry = st.traders * MERCHANT_CAPACITY;
+					const ratio = Math.min(1, carry / Math.max(1, sum3(want)));
+					const amounts = want.map(w => Math.floor(w * ratio));
 					if (sum3(amounts) <= 0) { continue; }
 					if (sum3(amounts) < settings.minTransport) { continue; } // za mały transport – pomijamy
 
@@ -759,14 +755,18 @@
 	}
 
 	function readPanel() {
-		const num = id => Math.max(0, Number($('#' + NS + '_' + id).val()) || 0);
+		// Puste pole = wartość domyślna (a nie 0) – inaczej np. pusta „pojemność od” robi dawcą każdą wioskę
+		const num = (id, def = 0) => {
+			const raw = String($('#' + NS + '_' + id).val() ?? '').trim();
+			return raw === '' ? def : Math.max(0, Number(raw) || 0);
+		};
 		const arr = id => [0, 1, 2].map(i => num(id + '_' + i));
 		const s = {
 			useDonors: $(`input[name=${NS}_useDonors]:checked`).val() !== '0',
 			donorByStorage: $('#' + NS + '_donorByStorage').is(':checked'),
-			donorMinCapacity: num('donorMinCapacity'),
+			donorMinCapacity: num('donorMinCapacity', DEFAULTS.donorMinCapacity),
 			donorByPoints: $('#' + NS + '_donorByPoints').is(':checked'),
-			donorMinPoints: num('donorMinPoints'),
+			donorMinPoints: num('donorMinPoints', DEFAULTS.donorMinPoints),
 			donorMatch: $('#' + NS + '_donorMatch').val() === 'any' ? 'any' : 'all',
 			donorKeep: arr('donorKeep'),
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'single',
@@ -777,7 +777,7 @@
 			priorityLevel: $('#' + NS + '_priorityAuto').is(':checked')
 				? arr('fillTo').map(x => Math.floor(x / 2))
 				: arr('priorityLevel'),
-			fillPercent: Math.min(100, Math.max(1, num('fillPercent'))),
+			fillPercent: Math.min(100, Math.max(1, num('fillPercent', DEFAULTS.fillPercent))),
 			reserve: arr('reserve'),
 			tradersSafeguard: num('tradersSafeguard'),
 			minTransport: num('minTransport'),
@@ -934,8 +934,12 @@
 
 		// Wezwanie zaliczamy po kliknięciu przycisku gry – tylko raz, nawet przy kilku przyciskach,
 		// i tylko jeśli to wezwanie jest nadal pierwsze w planie (ochrona przed podwójnym odhaczeniem)
+		// Tylko przyciski wysyłające formularz – inny przycisk .btn (np. zaznaczania) nie może odhaczyć wezwania.
+		// Gdy formularz nie ma przycisku typu submit, zostaje dotychczasowe zachowanie (wszystkie .btn).
+		const form = $('form[name=call-resources]');
+		const sendButtons = form.find(':submit').length ? form.find(':submit') : form.find('.btn');
 		let counted = false;
-		$('form[name=call-resources] .btn').off('click.' + NS).on('click.' + NS, function () {
+		sendButtons.off('click.' + NS).on('click.' + NS, function () {
 			// Gra wysyła wezwanie bez przeładowania strony – zdejmujemy kursor z przycisku,
 			// żeby kolejny Enter nie wysłał pustego formularza
 			setTimeout(() => { if (document.activeElement) { document.activeElement.blur(); } }, 0);
@@ -952,7 +956,7 @@
 		});
 
 		// Kursor na przycisku gry – Enter wysyła wezwanie (jedno naciśnięcie = jedna akcja gracza)
-		const submit = $('form[name=call-resources] .btn').first();
+		const submit = sendButtons.first();
 		if (submit[0]) { submit[0].focus(); }
 
 		const left = plan.summons.length - 1;
