@@ -30,7 +30,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.4.1';
+	const VERSION = 'v2.4.5';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -47,7 +47,8 @@
 		reserve: { spear: 0, sword: 0, axe: 0, archer: 0, light: 0, marcher: 0, heavy: 0, knight: 0 },
 		levels: [true, true, true, true],
 		mode: 'best',      // 'best' – najwięcej łupu na godzinę; 'time' – powrót po zadanym czasie
-		hours: 2
+		hours: 2,
+		tolMin: 3          // uzupełnianie: o ile minut później niż już wysłane może wrócić nowy oddział
 	};
 
 	// ---------- Pomocnicze ----------
@@ -82,6 +83,7 @@
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
 		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
+		if (Number.isFinite(saved.tolMin) && saved.tolMin >= 0) { s.tolMin = saved.tolMin; }
 		return s;
 	}
 
@@ -266,17 +268,26 @@
 				const ret = Object.values(x.v.options || {}).map(o => o && o.scavenging_squad && o.scavenging_squad.return_time).filter(Boolean);
 				if (ret.length) { limits[x.v.village_id] = Math.max(...ret); }
 			}
-			const left = Object.values(limits).map(t => t - now - FILL_MARGIN).filter(t => t > 0).sort((p, q) => p - q);
+			const tolSec = settings.tolMin * 60;
+			const allowed = t => t - now - FILL_MARGIN + tolSec;
+			const left = Object.values(limits).map(allowed).filter(t => t > 0).sort((p, q) => p - q);
 			if (!left.length) { throw 'W tej grupie nic nie jest teraz na zbieractwie – wybierz „Optymalnie” albo „Wróć po”.'; }
 			// kandydaci na wspólny czas: pozostałe czasy powrotu wiosek (najwyżej ok. 40 wartości)
 			const step = Math.max(1, Math.floor(left.length / 40));
 			const cands = [...new Set(left.filter((_, i) => i % step === 0).concat(left[left.length - 1]))];
 			for (const T of cands) {
-				const pool = active.filter(x => !limits[x.v.village_id] || limits[x.v.village_id] - now - FILL_MARGIN >= T);
+				const pool = active.filter(x => !limits[x.v.village_id] || allowed(limits[x.v.village_id]) >= T);
 				const r = search(pool, T).found;
 				if (r && (!best || r.loot > best.loot)) { best = r; }
 			}
-			if (!best) { throw 'Nie da się uzupełnić – wolnych wojsk jest za mało na oddział min. 10 populacji w dostępnym czasie.'; }
+			if (!best) {
+				// szczegóły, żeby było widać, czego brakuje: wojsk w domu czy czasu
+				const maxLeft = left[left.length - 1];
+				const homePop = Math.max(...active.map(x => unitIds.reduce((a, u) => a + x.avail[u] * data.units[u].pop, 0)));
+				throw `Nie da się uzupełnić – najwięcej wolnych zaznaczonych wojsk w jednej wiosce: ${fmt(homePop)} populacji, ` +
+					`najdłuższy dopuszczalny powrót (już wysłane + tolerancja) za ${fmtTime(maxLeft + FILL_MARGIN)}. ` +
+					'W tym czasie nie zmieści się oddział min. 10 populacji na wolny poziom.';
+			}
 		} else if (settings.mode === 'time') {
 			if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz np. 1:35 (1 h 35 min) albo 1,5 (półtorej godziny).'; }
 			const r = search(active, settings.hours * 3600);
@@ -291,6 +302,7 @@
 			if (!best) { throw 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.'; }
 		}
 		best.limits = limits;
+		best.tolSec = settings.mode === 'fill' ? settings.tolMin * 60 : 0;
 		// poziomy, na które żadna wioska nie wyśle, wypadają z planu (pozostałe i tak wracają razem)
 		const keep = best.counts.map(c => c > 0);
 		best.templates = best.templates.filter((_, i) => keep[i]);
@@ -326,7 +338,7 @@
 			const end = serverNow() + plan.seconds + FILL_MARGIN;
 			screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).each(function () {
 				const id = $(this).closest('tr').data('id');
-				if (plan.limits[id] && end > plan.limits[id]) { $(this).trigger('click'); }
+				if (plan.limits[id] && end > plan.limits[id] + (plan.tolSec || 0)) { $(this).trigger('click'); }
 			});
 		}
 		// tylko przewinięcie widoku do tabeli i przycisku „Wyślij” (nad tabelą) – bez kursora na przycisku
@@ -403,6 +415,8 @@
 		const hours = hm ? Number(hm[1]) + Number(hm[2]) / 60 : Number(rawH.replace(',', '.'));
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
 		s.hoursValid = hours > 0;
+		const tol = Number(String($(`#${NS}_tol`).val() ?? '').replace(',', '.'));
+		s.tolMin = tol >= 0 ? tol : DEFAULTS.tolMin;
 		return s;
 	}
 
@@ -430,7 +444,8 @@
 					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b> – skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców w przeliczeniu na godzinę)</label><br>
 					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
 					<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" style="width:50px"> h <small>(np. 1:35 albo 1,5)</small><br>
-					<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij wolne poziomy</b> – nowe oddziały wrócą nie później niż te, które już są na zbieractwie</label></td></tr>
+					<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij wolne poziomy</b> – nowe oddziały wrócą mniej więcej razem z tymi, które już są na zbieractwie </label>
+					<br>&nbsp;&nbsp;&nbsp;&nbsp;tolerancja: najwyżej <input type="text" id="${NS}_tol" value="${settings.tolMin}" style="width:35px"> min później</td></tr>
 			</table>
 			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
 			<div style="margin-top:8px"><input type="button" class="btn" id="${NS}_calc" value="Oblicz zestaw"></div>
@@ -454,7 +469,7 @@
 		const rows = plan.templates.map((tp, i) =>
 			`<tr><td>Poziom ${tp.optionId}</td><td>${unitsText(tp.units)}</td><td>${plan.counts[i]} z ${plan.villageCount}</td></tr>`).join('');
 		$('#' + NS + '_plan').html(`
-			<p>${plan.limits ? 'Nowe oddziały wrócą po ok.' : 'Wszystkie oddziały wrócą po ok.'} <b>${fmtTime(plan.seconds)}</b>${plan.limits ? ' – nie później niż te, które już są na zbieractwie' : ''}. Łup: <b>${fmt(plan.loot)}</b> surowców
+			<p>${plan.limits ? 'Nowe oddziały wrócą po ok.' : 'Wszystkie oddziały wrócą po ok.'} <b>${fmtTime(plan.seconds)}</b>${plan.limits ? ' – mniej więcej razem z tymi, które już są na zbieractwie' : ''}. Łup: <b>${fmt(plan.loot)}</b> surowców
 			(${plan.pages > 1 ? 'wszystkie strony: ' + plan.pages : '1 strona'}).
 			${plan.droppedUnits.length ? `<br><small>Pominięte jednostki (za mało ich w wioskach): ${plan.droppedUnits.map(u => UNIT_NAMES[u]).join(', ')}.</small>` : ''}${plan.skippedLevels && plan.skippedLevels.length ? `<br><small>Pominięte poziomy (za mało wojsk albo mniej łupu): ${plan.skippedLevels.join(', ')}.</small>` : ''}</p>
 			<table class="vis" style="width:100%">
