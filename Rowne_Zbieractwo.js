@@ -30,8 +30,10 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.3.1';
+	const VERSION = 'v2.4.1';
 	const NS = 'RowneZbieractwo';
+	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
+	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
 	const MIN_POP = 10;                 // gra przyjmuje oddział od 10 populacji
 	const PLAN_TTL = 30 * 60 * 1000;    // plan starszy niż 30 min trzeba przeliczyć
 	const SCAV_UNITS = ['spear', 'sword', 'axe', 'archer', 'light', 'marcher', 'heavy', 'knight'];
@@ -78,7 +80,7 @@
 			if (saved.reserve && Number.isFinite(saved.reserve[u])) { s.reserve[u] = Math.max(0, saved.reserve[u]); }
 		}
 		if (Array.isArray(saved.levels) && saved.levels.length === 4) { s.levels = saved.levels.map(Boolean); }
-		if (saved.mode === 'time' || saved.mode === 'best') { s.mode = saved.mode; }
+		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours > 0) { s.hours = saved.hours; }
 		return s;
 	}
@@ -183,84 +185,112 @@
 		// Kandydaci na mieszankę: percentyle liczby jednostek w wioskach (od słabszych do najsilniejszej).
 		// Mediana bywa za mała, gdy wiosek jest mało albo są bardzo różne – wybór robi symulacja.
 		const pct = (arr, q) => { const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(q * (a.length - 1) + 0.5))]; };
-		const mixes = [];
-		for (const q of [0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
-			const m = {};
-			for (const u of unitIds) { m[u] = pct(active.map(x => x.avail[u]), q); }
-			const key = unitIds.map(u => m[u]).join(',');
-			if (unitIds.some(u => m[u] > 0) && !mixes.some(x => x.key === key)) { mixes.push({ m, key }); }
-		}
-
-		// Kandydaci na poziomy: każdy niepusty podzbiór zaznaczonych (przy małych wojskach lepiej pominąć któryś poziom)
-		// tylko poziomy odblokowane i wolne w co najmniej jednej wiosce, która ma co wysłać
-		const usable = levels.filter(id => active.some(x => x.free.includes(id)));
-		const subsets = [];
-		for (let mask = 1; mask < (1 << usable.length); mask++) { subsets.push(usable.filter((_, i) => mask & (1 << i))); }
-
-		// Symulacja tego, co zrobi gra: poziom po poziomie, wioska wysyła zestaw, jeśli ma go w całości
-		const simulate = (templates, units) => {
-			let loot = 0;
-			const counts = templates.map(() => 0);
-			for (const x of active) {
-				const rest = Object.assign({}, x.avail);
-				const cf = x.v.unit_carry_factor || 1;
-				templates.forEach((tp, i) => {
-					if (!x.free.includes(tp.optionId)) { return; }
-					if (units.some(u => rest[u] < tp.units[u])) { return; }
-					units.forEach(u => { rest[u] -= tp.units[u]; });
-					counts[i]++;
-					loot += carryOf(tp.units, units) * cf * data.options[tp.optionId].loot_factor;
-				});
+		const mixesFor = pool => {
+			const out = [];
+			for (const q of [0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+				const m = {};
+				for (const u of unitIds) { m[u] = pct(pool.map(x => x.avail[u]), q); }
+				if (unitIds.some(u => m[u] > 0) && !out.some(o => unitIds.every(u => o[u] === m[u]))) { out.push(m); }
 			}
-			const opt = data.options[templates[0].optionId];
-			const seconds = duration(opt, carryOf(templates[0].units, units) * opt.loot_factor);
-			return { loot, counts, seconds };
+			return out;
 		};
 
-		let best = null;
-		let timeTooShort = false;
-		for (const lv of subsets) {
-			const invSum = lv.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
-			const share = id => (1 / data.options[id].loot_factor) / invSum;
-			for (const { m } of mixes) {
-				const units = unitIds.filter(u => m[u] > 0);
-				// Zestaw dla skali s (s = 1 → wioska z tą mieszanką wysyła wszystkie zaznaczone jednostki)
-				const templatesFor = s => lv.map(id => {
-					const t = {};
-					for (const u of units) { t[u] = Math.floor(m[u] * s * share(id)); }
-					return { optionId: id, units: t };
-				});
-				const valid = tps => tps.every(tp => popOf(tp.units, units) >= MIN_POP);
-				const consider = (s, tps) => {
-					const r = simulate(tps, units);
-					if (!r.loot) { return; }
-					const perHour = r.loot / (r.seconds / 3600);
-					const score = settings.mode === 'time' ? r.loot : perHour;
-					if (!best || score > best.score) { best = { s, templates: tps, perHour, score, usedUnits: units, ...r }; }
-				};
-				if (settings.mode === 'time') {
-					const opt = data.options[lv[0]];
-					if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz np. 1:35 (1 h 35 min) albo 1,5 (półtorej godziny).'; }
-				const haul = haulForDuration(opt, settings.hours * 3600);
-					if (haul <= 0) { timeTooShort = fmtTime(duration(opt, 0)); continue; }
-					const s = haul / (opt.loot_factor * share(lv[0]) * carryOf(m, units));
-					const tps = templatesFor(s);
-					if (valid(tps)) { consider(s, tps); }
-				} else {
-					for (let k = 0; k <= 120; k++) {
-						const s = 0.05 * Math.pow(20, k / 120); // 0,05 … 1
-						const tps = templatesFor(s);
-						if (valid(tps)) { consider(s, tps); }
+		// Przeszukanie: poziomy × mieszanki × wielkość zestawu.
+		// targetSec ustawione → zestaw na zadany czas (wynik: najwięcej łupu); brak → najwięcej łupu na godzinę.
+		const search = (pool, targetSec) => {
+			let found = null;
+			let tooShort = false;
+			const simulate = (templates, units) => {
+				let loot = 0;
+				const counts = templates.map(() => 0);
+				for (const x of pool) {
+					const rest = Object.assign({}, x.avail);
+					const cf = x.v.unit_carry_factor || 1;
+					templates.forEach((tp, i) => {
+						if (!x.free.includes(tp.optionId)) { return; }
+						if (units.some(u => rest[u] < tp.units[u])) { return; }
+						units.forEach(u => { rest[u] -= tp.units[u]; });
+						counts[i]++;
+						loot += carryOf(tp.units, units) * cf * data.options[tp.optionId].loot_factor;
+					});
+				}
+				const opt = data.options[templates[0].optionId];
+				return { loot, counts, seconds: duration(opt, carryOf(templates[0].units, units) * opt.loot_factor) };
+			};
+			const poolMixes = mixesFor(pool);
+			const poolLevels = levels.filter(id => pool.some(x => x.free.includes(id)));
+			for (let mask = 1; mask < (1 << poolLevels.length); mask++) {
+				const lv = poolLevels.filter((_, i) => mask & (1 << i));
+				const invSum = lv.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
+				const share = id => (1 / data.options[id].loot_factor) / invSum;
+				for (const m of poolMixes) {
+					const units = unitIds.filter(u => m[u] > 0);
+					// s = 1 → wioska z tą mieszanką wysyła wszystkie zaznaczone jednostki
+					const templatesFor = sc => lv.map(id => {
+						const t = {};
+						for (const u of units) { t[u] = Math.floor(m[u] * sc * share(id)); }
+						return { optionId: id, units: t };
+					});
+					const consider = (sc, tps) => {
+						if (!tps.every(tp => popOf(tp.units, units) >= MIN_POP)) { return; }
+						const r = simulate(tps, units);
+						if (!r.loot) { return; }
+						const perHour = r.loot / (r.seconds / 3600);
+						const score = targetSec ? r.loot : perHour;
+						if (!found || score > found.score) { found = { s: sc, templates: tps, perHour, score, usedUnits: units, ...r }; }
+					};
+					if (targetSec) {
+						const opt = data.options[lv[0]];
+						const haul = haulForDuration(opt, targetSec);
+						if (haul <= 0) { tooShort = true; continue; }
+						const sc = haul / (opt.loot_factor * share(lv[0]) * carryOf(m, units));
+						consider(sc, templatesFor(sc));
+					} else {
+						for (let k = 0; k <= 120; k++) {
+							const sc = 0.05 * Math.pow(20, k / 120); // 0,05 … 1
+							consider(sc, templatesFor(sc));
+						}
 					}
 				}
 			}
+			return { found, tooShort };
+		};
+
+		let best = null;
+		let limits = null;
+		if (settings.mode === 'fill') {
+			// Uzupełnianie: nowe oddziały wracają nie później niż te, które już są na zbieractwie w danej wiosce
+			const now = serverNow();
+			limits = {};
+			for (const x of active) {
+				const ret = Object.values(x.v.options || {}).map(o => o && o.scavenging_squad && o.scavenging_squad.return_time).filter(Boolean);
+				if (ret.length) { limits[x.v.village_id] = Math.max(...ret); }
+			}
+			const left = Object.values(limits).map(t => t - now - FILL_MARGIN).filter(t => t > 0).sort((p, q) => p - q);
+			if (!left.length) { throw 'W tej grupie nic nie jest teraz na zbieractwie – wybierz „Optymalnie” albo „Wróć po”.'; }
+			// kandydaci na wspólny czas: pozostałe czasy powrotu wiosek (najwyżej ok. 40 wartości)
+			const step = Math.max(1, Math.floor(left.length / 40));
+			const cands = [...new Set(left.filter((_, i) => i % step === 0).concat(left[left.length - 1]))];
+			for (const T of cands) {
+				const pool = active.filter(x => !limits[x.v.village_id] || limits[x.v.village_id] - now - FILL_MARGIN >= T);
+				const r = search(pool, T).found;
+				if (r && (!best || r.loot > best.loot)) { best = r; }
+			}
+			if (!best) { throw 'Nie da się uzupełnić – wolnych wojsk jest za mało na oddział min. 10 populacji w dostępnym czasie.'; }
+		} else if (settings.mode === 'time') {
+			if (settings.hoursValid === false) { throw 'Nieprawidłowy czas – wpisz np. 1:35 (1 h 35 min) albo 1,5 (półtorej godziny).'; }
+			const r = search(active, settings.hours * 3600);
+			best = r.found;
+			if (!best) {
+				throw r.tooShort
+					? 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(duration(data.options[levels[0]], 0)) + '.'
+					: 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.';
+			}
+		} else {
+			best = search(active, 0).found;
+			if (!best) { throw 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.'; }
 		}
-		if (!best) {
-			if (timeTooShort) { throw 'Zadany czas jest za krótki – minimum to ok. ' + timeTooShort + '.'; }
-			throw settings.mode === 'time'
-				? 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.'
-				: 'Za mało wojsk – żadna wioska nie złoży oddziału min. 10 populacji.';
-		}
+		best.limits = limits;
 		// poziomy, na które żadna wioska nie wyśle, wypadają z planu (pozostałe i tak wracają razem)
 		const keep = best.counts.map(c => c > 0);
 		best.templates = best.templates.filter((_, i) => keep[i]);
@@ -279,7 +309,7 @@
 
 	// Wpisuje zestaw poziomu w wiersz wojsk gry i zaznacza kolumnę poziomu („Zaznacz wszystkie” gry).
 	// Wcześniej odznacza wszystko inne, żeby z tym zestawem nie poszedł inny poziom.
-	async function fillLevel(template) {
+	async function fillLevel(template, plan) {
 		const screen = $('#scavenge_mass_screen');
 		const inputs = screen.find('.candidate-squad-widget input.unitsInput');
 		if (!inputs.length) { throw 'Nie znaleziono formularza Zbieractwa masowego na tej stronie.'; }
@@ -291,6 +321,14 @@
 		for (let i = 0; i < 15 && colBox().prop('disabled'); i++) { await new Promise(r => setTimeout(r, 100)); }
 		if (colBox().prop('disabled')) { return 0; }
 		colBox().trigger('click');
+		// tryb uzupełniania: odznaczamy wioski, w których nowy oddział wróciłby później niż już wysłane
+		if (plan && plan.limits) {
+			const end = serverNow() + plan.seconds + FILL_MARGIN;
+			screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).each(function () {
+				const id = $(this).closest('tr').data('id');
+				if (plan.limits[id] && end > plan.limits[id]) { $(this).trigger('click'); }
+			});
+		}
 		// tylko przewinięcie widoku do tabeli i przycisku „Wyślij” (nad tabelą) – bez kursora na przycisku
 		const table = screen.find('.mass-scavenge-table');
 		if (table.length) { window.scrollTo({ top: Math.max(0, table.offset().top - 160), behavior: 'smooth' }); }
@@ -322,7 +360,7 @@
 		}
 		if (step.idx < plan.templates.length) {
 			const tp = plan.templates[step.idx];
-			const ticked = await fillLevel(tp);
+			const ticked = await fillLevel(tp, plan);
 			step.idx++;
 			storageSet('plan2', plan);
 			renderProgress(plan);
@@ -358,7 +396,7 @@
 			s.reserve[u] = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)) || 0);
 		}
 		s.levels = [1, 2, 3, 4].map(i => $(`#${NS}_level_${i}`).is(':checked'));
-		s.mode = $(`input[name=${NS}_mode]:checked`).val() === 'time' ? 'time' : 'best';
+		s.mode = $(`input[name=${NS}_mode]:checked`).val() || 'best';
 		// „1:35” = 1 h 35 min, „1,5” / „1.5” = półtorej godziny
 		const rawH = String($(`#${NS}_hours`).val() ?? '').trim();
 		const hm = rawH.match(/^(\d+):(\d{1,2})$/);
@@ -389,9 +427,10 @@
 				<tr><td>Poziomy</td><td colspan="2"><div style="white-space:nowrap">${levelBoxes}</div>
 					<small>oddział musi mieć min. 10 populacji – przy małej liczbie wojsk skrypt sam pominie poziomy, które się nie opłacają</small></td></tr>
 				<tr><td>Tryb</td><td colspan="2">
-					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode !== 'time' ? 'checked' : ''}> <b>Najwięcej łupu na godzinę</b> – skrypt sam dobiera wielkość zestawu</label><br>
+					<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b> – skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców w przeliczeniu na godzinę)</label><br>
 					<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
-					<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" style="width:50px"> h <small>(np. 1:35 albo 1,5)</small></td></tr>
+					<input type="text" id="${NS}_hours" value="${fmtHours(settings.hours)}" style="width:50px"> h <small>(np. 1:35 albo 1,5)</small><br>
+					<label><input type="radio" name="${NS}_mode" value="fill" ${settings.mode === 'fill' ? 'checked' : ''}> <b>Uzupełnij wolne poziomy</b> – nowe oddziały wrócą nie później niż te, które już są na zbieractwie</label></td></tr>
 			</table>
 			<div id="${NS}_warn" style="margin-top:6px;color:#c00;font-weight:bold"></div>
 			<div style="margin-top:8px"><input type="button" class="btn" id="${NS}_calc" value="Oblicz zestaw"></div>
@@ -415,7 +454,7 @@
 		const rows = plan.templates.map((tp, i) =>
 			`<tr><td>Poziom ${tp.optionId}</td><td>${unitsText(tp.units)}</td><td>${plan.counts[i]} z ${plan.villageCount}</td></tr>`).join('');
 		$('#' + NS + '_plan').html(`
-			<p>Wszystkie oddziały wrócą po ok. <b>${fmtTime(plan.seconds)}</b>. Łup: <b>${fmt(plan.loot)}</b> surowców
+			<p>${plan.limits ? 'Nowe oddziały wrócą po ok.' : 'Wszystkie oddziały wrócą po ok.'} <b>${fmtTime(plan.seconds)}</b>${plan.limits ? ' – nie później niż te, które już są na zbieractwie' : ''}. Łup: <b>${fmt(plan.loot)}</b> surowców
 			(${plan.pages > 1 ? 'wszystkie strony: ' + plan.pages : '1 strona'}).
 			${plan.droppedUnits.length ? `<br><small>Pominięte jednostki (za mało ich w wioskach): ${plan.droppedUnits.map(u => UNIT_NAMES[u]).join(', ')}.</small>` : ''}${plan.skippedLevels && plan.skippedLevels.length ? `<br><small>Pominięte poziomy (za mało wojsk albo mniej łupu): ${plan.skippedLevels.join(', ')}.</small>` : ''}</p>
 			<table class="vis" style="width:100%">
