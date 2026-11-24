@@ -10,7 +10,7 @@
  */
 
 /*
- * Kupiecki Szlak v3.2.0
+ * Kupiecki Szlak v3.2.1
  * Autor: Mavionis
  *
  * KROK 1 – Przeglądy > Produkcja: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -46,7 +46,7 @@
 	}
 
 	const NAME = 'Kupiecki Szlak';
-	const VERSION = 'v3.2.0';
+	const VERSION = 'v3.2.1';
 	const NS = 'Zbieracz_Surowcow'; // wewnętrzny klucz zapisu – bez zmian, żeby ustawienia graczy się nie skasowały
 	const MERCHANT_CAPACITY = 1000;
 	const PLAN_TTL = 30 * 60 * 1000;
@@ -67,7 +67,8 @@
 		// 2. Odbiorcy
 		mode: 'single',              // 'single' – do jednej wioski, 'spread' – do pozostałych wiosek
 		targetId: '',                // wioska docelowa w trybie 'single'
-		fillTo: [0, 0, 0],           // uzupełniaj do (0 = do limitu spichlerza)
+		fillTo: [0, 0, 0],           // uzupełniaj do
+		fillToAvg: true,             // true – w polu jest średnia i ma być aktualizowana sama
 		priorityAuto: true,          // minimum = połowa „Uzupełniaj do”
 		priorityLevel: [0, 0, 0],    // gdy zabraknie surowców, najpierw każdemu po tyle (0 = bez minimum)
 		fillPercent: 95,             // maks. zapełnienie spichlerza: nikt nie dostanie więcej, a wioska ponad próg oddaje nadwyżkę
@@ -496,13 +497,21 @@
 		).join('');
 	}
 
+	const panelState = { fillToAvg: () => false };
+
 	function renderPanel(villages, settings) {
 		$('#' + NS).remove();
 
 		const caps = villages.map(v => v.capacity);
 		// pierwsze uruchomienie: zamiast zer od razu średnia, żeby cel nigdy nie był pusty
 		const avgNow = [0, 1, 2].map(i => Math.floor(villages.reduce((sum, v) => sum + v.resources[i] + v.incoming[i], 0) / villages.length));
-		if (!settings.fillTo.some(x => x > 0)) { settings.fillTo = avgNow; }
+		// Średnia (wstawiona przyciskiem lub przy pierwszym otwarciu) jest odświeżana przy każdym otwarciu;
+		// liczby wpisane ręcznie zostają bez zmian.
+		if (settings.fillToAvg || !settings.fillTo.some(x => x > 0)) {
+			settings.fillTo = avgNow;
+			settings.fillToAvg = true;
+		}
+		panelState.fillToAvg = () => !!settings.fillToAvg; // do czasu podpięcia przycisków
 		const avg = [0, 1, 2].map(i => Math.floor(villages.reduce((sum, v) => sum + v.resources[i] + v.incoming[i], 0) / villages.length));
 		const esc = t => $('<div>').text(t).html();
 
@@ -560,6 +569,7 @@
 					<td>${resInputs('fillTo', settings.fillTo)}
 					<input type="button" class="btn" id="${NS}_fillAvg" value="wstaw średnią">
 					<input type="button" class="btn" id="${NS}_fillMax" value="do pełna">
+					<small id="${NS}_fillAvgInfo"></small>
 					<br><small>średnio na wioskę masz: ${avg.map(fmt).join(' / ')}; „do pełna” = największy spichlerz (${fmt(Math.max(...caps))}), a „Maks. zapełnienie” i tak pilnuje, żeby się nie przelało</small></td></tr>
 				<tr><td>Gdy zabraknie surowców,<br>najpierw każdemu po</td>
 					<td>${resInputs('priorityLevel', settings.priorityLevel)}
@@ -626,12 +636,21 @@
 		$('#' + NS).on('input change', `#${NS}_settings input, #${NS}_settings select`, updateDonorCount);
 		updateDonorCount();
 
-		const setFillTo = values => {
+		// fillToAvg: czy w polu „Uzupełniaj do” jest średnia (aktualizowana sama)
+		let fillToAvg = !!settings.fillToAvg;
+		const showAvgInfo = () => $('#' + NS + '_fillAvgInfo').text(fillToAvg ? '✓ średnia – aktualizuje się sama' : '');
+		const setFillTo = (values, isAvg) => {
 			values.forEach((v, i) => $('#' + NS + '_fillTo_' + i).val(v));
+			fillToAvg = isAvg;
+			showAvgInfo();
 			$('#' + NS + '_fillTo_0').trigger('change');
 		};
-		$('#' + NS + '_fillAvg').on('click', () => setFillTo(avg));
-		$('#' + NS + '_fillMax').on('click', () => { const m = Math.max(...caps); setFillTo([m, m, m]); });
+		$('#' + NS + '_fillAvg').on('click', () => setFillTo(avg, true));
+		$('#' + NS + '_fillMax').on('click', () => { const m = Math.max(...caps); setFillTo([m, m, m], false); });
+		// ręczna zmiana liczby wyłącza automatyczną średnią
+		$('#' + NS).on('input', `[id^="${NS}_fillTo_"]`, () => { fillToAvg = false; showAvgInfo(); updateDonorCount(); });
+		showAvgInfo();
+		panelState.fillToAvg = () => fillToAvg;
 
 		$('#' + NS + '_toggleSettings').on('click', function (e) {
 			e.preventDefault();
@@ -660,6 +679,15 @@
 				const members = (s.useDonors && s.donorByGroup && s.donorGroupId)
 					? await loadGroupMembers(s.donorGroupId, fresh.activeGroupId, true)
 					: null;
+				if (s.fillToAvg) {
+					// średnia z aktualnych danych (surowce mogły urosnąć od otwarcia panelu)
+					s.fillTo = [0, 1, 2].map(i => Math.floor(fresh.reduce((t, v) => t + v.resources[i] + v.incoming[i], 0) / fresh.length));
+					if (s.priorityAuto) { s.priorityLevel = s.fillTo.map(x => Math.floor(x / 2)); }
+					s.fillTo.forEach((v, i) => $('#' + NS + '_fillTo_' + i).val(v));
+					s.priorityLevel.forEach((v, i) => $('#' + NS + '_priorityLevel_' + i).val(v));
+					storageSet('settings', s);
+					$('#' + NS + '_summary').html(describe(s, fresh));
+				}
 				const summons = createPlan(fresh, s, members);
 				renderPlan(summons, fresh);
 				const now = new Date();
@@ -718,6 +746,16 @@
 				const inc = s.countIncoming ? v.incoming : [0, 0, 0];
 				return [0, 1, 2].some(i => v.resources[i] + inc[i] > Math.max(level(v)[i], reserve[i]));
 			}).length;
+			// Wioski z nadmiarem: ile mogą oddać i ilu mają wolnych kupców
+			for (const v of villages) {
+				const inc = s.countIncoming ? v.incoming : [0, 0, 0];
+				const surplus = [0, 1, 2].map(i => Math.max(0, Math.min(v.resources[i], v.resources[i] + inc[i] - Math.max(level(v)[i], reserve[i]))));
+				if (surplus.some(x => x > 0)) {
+					const traders = Math.max(0, v.tradersFree - s.tradersSafeguard);
+					lines.push(`Z nadmiarem ${esc(v.name)}: może oddać ${surplus.join('/')}, wolni kupcy: <b>${traders}</b>` +
+						(traders ? '' : ' – <b>wszyscy w drodze</b>'));
+				}
+			}
 			if (!withSurplus) {
 				lines.push(`<b>Żadna wioska nie ma nadmiaru</b> – wszystkie są poniżej celu. ` +
 					`Żeby wyrównać, wpisz w „Uzupełniaj do” wartości blisko średniej: <b>${avg.map(fmt).join(' / ')}</b>.`);
@@ -755,7 +793,9 @@
 		const who = s.mode === 'single' ? 'Wybrana wioska jest uzupełniana'
 			: (s.useDonors ? 'Wszystkie wioski oprócz dawców są uzupełniane' : 'Wszystkie wioski są uzupełniane');
 		if (set(s.fillTo)) {
-			lines.push(`${who} do <b>${r3(s.fillTo)}</b>, ale żaden spichlerz nie zostanie zapełniony ponad ${s.fillPercent}%.`);
+			lines.push(`${who} do <b>${r3(s.fillTo)}</b>` +
+				(s.fillToAvg ? ' (<b>średnia</b> – aktualizuje się sama przy każdym planie)' : '') +
+				`, ale żaden spichlerz nie zostanie zapełniony ponad ${s.fillPercent}%.`);
 		} else {
 			lines.push('<b style="color:#c00">Wpisz „Uzupełniaj do” (albo kliknij „wstaw średnią” / „do pełna”).</b>');
 		}
@@ -792,6 +832,7 @@
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'single',
 			targetId: String($('#' + NS + '_targetId').val() || ''),
 			fillTo: arr('fillTo'),
+			fillToAvg: panelState.fillToAvg(),
 			priorityAuto: $('#' + NS + '_priorityAuto').is(':checked'),
 			priorityLevel: $('#' + NS + '_priorityAuto').is(':checked')
 				? arr('fillTo').map(x => Math.floor(x / 2))
