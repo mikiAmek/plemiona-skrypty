@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.1
+ * Równe Zbieractwo v2.6.3
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.1';
+	const VERSION = 'v2.6.3';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -216,6 +216,8 @@
 		const search = (pool, targetSec, range) => {
 			let found = null;
 			let tooShort = false;
+			let tooSmall = false;   // zestaw poniżej 10 populacji (czas za krótki)
+			let tooBig = false;     // żadna wioska nie ma takiego zestawu (czas za długi)
 			const simulate = (templates, units, record) => {
 				let loot = 0;
 				const counts = templates.map(() => 0);
@@ -251,9 +253,9 @@
 						return { optionId: id, units: t };
 					});
 					const consider = (sc, tps) => {
-						if (!tps.every(tp => popOf(tp.units, units) >= MIN_POP)) { return; }
+						if (!tps.every(tp => popOf(tp.units, units) >= MIN_POP)) { tooSmall = true; return; }
 						const r = simulate(tps, units);
-						if (!r.loot) { return; }
+						if (!r.loot) { tooBig = true; return; }
 						const perHour = r.loot / (r.seconds / 3600);
 						if (!targetSec && range && (r.seconds < range[0] || r.seconds > range[1])) { return; }
 						const score = targetSec ? r.loot : perHour;
@@ -273,7 +275,7 @@
 					}
 				}
 			}
-			return { found, tooShort };
+			return { found, tooShort, tooSmall, tooBig };
 		};
 
 		let best = null;
@@ -311,9 +313,11 @@
 			const r = search(active, settings.hours * 3600);
 			best = r.found;
 			if (!best) {
-				throw r.tooShort
+				throw r.tooShort && !r.tooBig && !r.tooSmall
 					? 'Zadany czas jest za krótki – minimum to ok. ' + fmtTime(duration(data.options[levels[0]], 0)) + '.'
-					: 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.';
+					: r.tooBig
+						? `Za mało wojsk na powrót po ${fmtHours(settings.hours)} – żadna wioska nie ma tak dużego zestawu. Skróć czas albo zaznacz więcej jednostek.`
+						: 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.';
 			}
 		} else {
 			const lo = settings.rangeMin, hi = settings.rangeMax;
@@ -365,8 +369,8 @@
 		const inputs = screen.find('.candidate-squad-widget input.unitsInput');
 		if (!inputs.length) { throw 'Nie znaleziono formularza Zbieractwa masowego na tej stronie.'; }
 		// odznacz wszystko: najpierw „Zaznacz wszystkie” (gra odznacza wtedy całą kolumnę), potem pojedyncze wioski
-		screen.find('.mass-scavenge-table input.select-all-col:checked').each(function () { $(this).trigger('click'); });
-		screen.find('.mass-scavenge-table td[class*="option-"] input[type=checkbox]:checked').each(function () { $(this).trigger('click'); });
+		screen.find('.mass-scavenge-table input.select-all-col:checked, .mass-scavenge-table input.select-all-row:checked').each(function () { $(this).trigger('click'); });
+		screen.find('.mass-scavenge-table td.option-inactive input[type=checkbox]:checked').each(function () { $(this).trigger('click'); });
 		inputs.each(function () { setInput(this, template.units[this.name] ? template.units[this.name] : ''); });
 		// gra odblokowuje pola wyboru dopiero po przeliczeniu wpisanego zestawu – czekamy do 1,5 s
 		const colBox = () => screen.find(`.select-all-col[data-option="${template.optionId}"]`);
@@ -379,7 +383,7 @@
 		const allowed = plan && plan.allowed && plan.allowed[template.optionId] ? new Set(plan.allowed[template.optionId].map(Number)) : null;
 		const opt = plan && plan.opts ? plan.opts[template.optionId] : null;
 		const carry = Object.keys(template.units).reduce((a, u) => a + template.units[u] * ((plan && plan.carry && plan.carry[u]) || 0), 0);
-		screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).each(function () {
+		screen.find(`.mass-scavenge-table td.option-${template.optionId}.option-inactive input[type=checkbox]:checked`).each(function () {
 			const id = Number($(this).closest('tr').data('id'));
 			let ok = !allowed || allowed.has(id);
 			if (ok && plan && plan.limits && plan.limits[id] && opt) {
@@ -392,12 +396,14 @@
 		// tylko przewinięcie widoku do tabeli i przycisku „Wyślij” (nad tabelą) – bez kursora na przycisku
 		const table = screen.find('.mass-scavenge-table');
 		if (table.length) { window.scrollTo({ top: Math.max(0, table.offset().top - 160), behavior: 'smooth' }); }
-		return screen.find(`.mass-scavenge-table td.option-${template.optionId} input[type=checkbox]:checked`).length;
+		return screen.find(`.mass-scavenge-table td.option-${template.optionId}.option-inactive input[type=checkbox]:checked`).length;
 	}
 
-	// Czy w kolumnie poziomu są jeszcze zaznaczone wioski (czyli nie kliknięto „Wyślij”)
+	// Czy w kolumnie poziomu są jeszcze zaznaczone wolne wioski (czyli nie kliknięto „Wyślij”).
+	// Po wysłaniu gra zmienia klasę komórki na option-active, a ukryte pole wyboru zostaje zaznaczone –
+	// dlatego liczymy tylko komórki option-inactive.
 	const stillTicked = optionId =>
-		$(`#scavenge_mass_screen .mass-scavenge-table td.option-${optionId} input[type=checkbox]:checked`).length > 0;
+		$(`#scavenge_mass_screen .mass-scavenge-table td.option-${optionId}.option-inactive input[type=checkbox]:checked`).length > 0;
 
 	// ---------- Kolejne kroki (1 kliknięcie = 1 akcja) ----------
 
