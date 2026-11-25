@@ -1,0 +1,229 @@
+/*
+ * Planer Monet v1.0.0
+ * Autor: Mavionis
+ *
+ * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
+ *
+ * Pomaga w biciu złotych monet:
+ *  - przypisuje każdą wioskę bez Pałacu do najbliższej wioski z Pałacem i pokazuje najdłuższą trasę kupców,
+ *  - układa wioski z Pałacem w ranking: gdzie założyć najlepszą flagę „Obniżenie kosztu monet” i gdzie Bonus flagi,
+ *  - wskazuje, gdzie zbudować nowy Pałac, żeby najbardziej skrócić trasy (z wymaganiami: Ratusz 20, Kuźnia 20, Rynek 10).
+ * Skrypt tylko czyta stronę i liczy – niczego nie buduje, nie wysyła i nie zmienia w grze.
+ */
+(function () {
+	'use strict';
+
+	const NAME = 'Planer Monet';
+	const VERSION = 'v1.0.0';
+	const NS = 'PlanerMonet';
+	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
+	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
+	const TOP_FLAG = 0.23;                                       // fioletowa flaga; z Bonusem flagi −46%
+	const PALACE_REQ = { main: 20, smith: 20, market: 10 };
+	const REQ_NAMES = { main: 'Ratusz', smith: 'Kuźnia', market: 'Rynek' };
+
+	const DEFAULTS = { skip: '', noMint: '', useQueued: true, bonusMin: 6 };
+
+	// ---------- Narzędzia ----------
+	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+	const notify = (msg, type = 'InfoMessage') => {
+		if (typeof UI !== 'undefined' && UI[type]) { UI[type](esc(msg)); } else { alert(msg); }
+	};
+	const storageKey = key => `${NS}_${game_data.world}_${game_data.player.id}_${key}`;
+	const storageGet = key => { try { return JSON.parse(localStorage.getItem(storageKey(key))); } catch (e) { return null; } };
+	const storageSet = (key, val) => { try { localStorage.setItem(storageKey(key), JSON.stringify(val)); } catch (e) { /* brak miejsca */ } };
+	const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+	const fmt = n => Math.round(n).toLocaleString('pl-PL');
+	const f1 = n => n.toFixed(1).replace('.', ',');
+	// pojemność spichlerza z poziomu (poziom 30 = 400 000)
+	const storageCap = lvl => (lvl > 0 ? Math.round(1000 * Math.pow(1.2294934, lvl - 1)) : 0);
+
+	function loadSettings() {
+		const s = Object.assign({}, DEFAULTS, storageGet('settings') || {});
+		s.bonusMin = Math.max(1, parseInt(s.bonusMin, 10) || DEFAULTS.bonusMin);
+		return s;
+	}
+
+	// „101-106, 002, Wioska 004” → test nazwy wioski (numer z końca nazwy albo cała nazwa)
+	function nameMatcher(text) {
+		const parts = String(text || '').split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
+		const ranges = [], names = [];
+		parts.forEach(p => {
+			const m = p.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+			if (m) { ranges.push([Number(m[1]), Number(m[2])]); }
+			else if (/^\d+$/.test(p)) { ranges.push([Number(p), Number(p)]); }
+			else { names.push(p.toLowerCase()); }
+		});
+		return v => {
+			const n = (v.name.match(/(\d+)\s*$/) || [])[1];
+			return names.includes(v.name.toLowerCase()) || (n !== undefined && ranges.some(([a, b]) => Number(n) >= a && Number(n) <= b));
+		};
+	}
+
+	// ---------- Wioski z Przeglądu > Budynki ----------
+	function readVillages() {
+		const list = [];
+		$('#buildings_table tr.vrow, #buildings_table tr[id^="v_"]').each(function () {
+			const tr = $(this);
+			const label = tr.find('.quickedit-label').first();
+			const name = String(label.data('text') ?? label.attr('data-text') ?? '').trim();
+			const m = label.text().match(/\((\d{1,3})\|(\d{1,3})\)\s*K\d+\s*$/);
+			if (!m) { return; }
+			const lvl = b => parseInt(tr.find('td.b_' + b).first().text(), 10) || 0;
+			const queuedPalace = tr.find('.queue_icon img[src*="buildings/snob."]').length > 0;
+			list.push({
+				id: Number(String(tr.attr('id') || '').replace('v_', '')), name,
+				x: Number(m[1]), y: Number(m[2]),
+				main: lvl('main'), smith: lvl('smith'), market: lvl('market'), storage: lvl('storage'),
+				palace: lvl('snob') > 0, queuedPalace
+			});
+		});
+		return list;
+	}
+
+	// ---------- Obliczenia ----------
+	// przypisanie wiosek wysyłających do najbliższego Pałacu
+	function assign(villages, palaces) {
+		const groups = new Map(palaces.map(p => [p.id, { palace: p, senders: [] }]));
+		let longest = null;
+		villages.forEach(v => {
+			if (groups.has(v.id)) { return; }
+			let best = null, bd = Infinity;
+			palaces.forEach(p => { const d = dist(v, p); if (d < bd - 1e-9 || (Math.abs(d - bd) < 1e-9 && p.id < best.id)) { bd = d; best = p; } });
+			if (!best) { return; }
+			groups.get(best.id).senders.push({ v, d: bd });
+			if (!longest || bd > longest.d) { longest = { v, p: best, d: bd }; }
+		});
+		const all = [...groups.values()].flatMap(g => g.senders);
+		return { groups: [...groups.values()], longest, avg: all.length ? all.reduce((t, s) => t + s.d, 0) / all.length : 0 };
+	}
+
+	// surowce i monety na jedną falę pakietów (glina ogranicza – moneta potrzebuje jej najwięcej)
+	function coinsPerWave(group, discount) {
+		const members = [group.palace, ...group.senders.map(s => s.v)];
+		const res = members.reduce((t, v) => t + storageCap(v.storage) * PACKAGE, 0);
+		const per = Object.keys(COIN).map(r => res / (COIN[r] * (1 - discount)));
+		return { res, coins: Math.floor(Math.min(...per)) };
+	}
+
+	function analyse(villages, s) {
+		const skip = nameMatcher(s.skip), noMint = nameMatcher(s.noMint);
+		const active = villages.filter(v => !skip(v));
+		const isPalace = v => v.palace || (s.useQueued && v.queuedPalace);
+		const palaces = active.filter(v => isPalace(v) && !noMint(v));
+		if (!palaces.length) { throw 'nie ma żadnej wioski z Pałacem, która bije monety.'; }
+		const now = assign(active, palaces);
+		// ranking: najwięcej surowców na falę → najlepsza flaga
+		const ranking = now.groups.map(g => {
+			const base = coinsPerWave(g, 0), top = coinsPerWave(g, TOP_FLAG), bonus = coinsPerWave(g, 2 * TOP_FLAG);
+			return Object.assign(g, { base, top, bonus, far: g.senders.reduce((m, x) => Math.max(m, x.d), 0) });
+		}).sort((a, b) => b.base.res - a.base.res || b.senders.length - a.senders.length || a.palace.id - b.palace.id);
+		// gdzie nowy Pałac: każda wioska bez Pałacu jako kandydat
+		const candidates = active.filter(v => !isPalace(v)).map(c => {
+			const after = assign(active, palaces.concat(c));
+			const g = after.groups.find(x => x.palace.id === c.id);
+			const missing = Object.keys(PALACE_REQ).filter(k => c[k] < PALACE_REQ[k]).map(k => `${REQ_NAMES[k]} ${c[k]}/${PALACE_REQ[k]}`);
+			return { c, after, takes: g.senders.length, missing };
+		}).sort((a, b) => a.after.longest.d - b.after.longest.d || a.after.avg - b.after.avg || b.takes - a.takes)
+			.slice(0, 5);
+		return { active, skipped: villages.length - active.length, palaces, now, ranking, candidates };
+	}
+
+	// ---------- Panel ----------
+	function render(s, villages) {
+		$('#' + NS).remove();
+		if (!$('#' + NS + '_css').length) {
+			$('head').append(`<style id="${NS}_css">#${NS} label{display:inline;margin:0;white-space:nowrap}#${NS} input[type=text]{vertical-align:middle}
+				#${NS} input[type=checkbox]{vertical-align:middle;margin:0 3px 0 0}#${NS} small{color:#5a4a2a}#${NS} td.num{text-align:right}</style>`);
+		}
+		$($('#content_value').length ? '#content_value' : '#mobileContent').first().prepend(`
+			<div id="${NS}" class="vis" style="padding:8px;margin-bottom:10px">
+				<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
+				<table class="vis" style="width:100%">
+					<tr><th colspan="2">Ustawienia</th></tr>
+					<tr><td style="width:210px">Pomiń wioski</td><td><input type="text" id="${NS}_skip" value="${esc(s.skip)}" style="width:220px" placeholder="np. 101-106">
+						<small>– nie biją i nie wysyłają; numery, zakresy albo nazwy po przecinku</small></td></tr>
+					<tr><td>Pałace, które nie biją monet</td><td><input type="text" id="${NS}_nomint" value="${esc(s.noMint)}" style="width:220px" placeholder="np. 002, 004, 005">
+						<small>– wysyłają surowce jak zwykłe wioski</small></td></tr>
+					<tr><td>Pałac w budowie</td><td><label><input type="checkbox" id="${NS}_queued" ${s.useQueued ? 'checked' : ''}> licz jak gotowy Pałac</label></td></tr>
+					<tr><td>Bonus flagi</td><td>gdy grupa ma co najmniej <input type="text" id="${NS}_bonus" value="${s.bonusMin}" style="width:30px"> wiosek wysyłających</td></tr>
+				</table>
+				<div id="${NS}_out"></div>
+			</div>`);
+		const redraw = () => {
+			const cur = {
+				skip: String($(`#${NS}_skip`).val()), noMint: String($(`#${NS}_nomint`).val()),
+				useQueued: $(`#${NS}_queued`).is(':checked'), bonusMin: Math.max(1, parseInt($(`#${NS}_bonus`).val(), 10) || DEFAULTS.bonusMin)
+			};
+			storageSet('settings', cur);
+			try { $(`#${NS}_out`).html(results(analyse(villages, cur), cur)); }
+			catch (ex) { $(`#${NS}_out`).html(`<p style="color:#b00"><b>${esc(typeof ex === 'string' ? ex : 'błąd obliczeń.')}</b></p>`); if (typeof ex !== 'string') { console.error(NAME, ex); } }
+		};
+		$('#' + NS).on('input change', 'input', redraw);
+		redraw();
+	}
+
+	function results(a, s) {
+		const L = a.now.longest;
+		const tag = v => esc(v.name) + (v.queuedPalace && !v.palace ? ' <small>(w budowie)</small>' : '');
+		const rank = a.ranking.map((g, i) => {
+			const bonus = g.senders.length >= s.bonusMin;
+			return `<tr>
+				<td class="num">${i + 1}.</td><td><b>${tag(g.palace)}</b></td>
+				<td class="num">${g.senders.length || '<small>sama</small>'}</td>
+				<td class="num">${g.senders.length ? f1(g.far) : '–'}</td>
+				<td class="num">${fmt(g.base.res)}</td>
+				<td class="num">${fmt(g.base.coins)} → ${fmt(g.top.coins)}</td>
+				<td>${i === 0 ? '<b>najlepsza</b>' : `${i + 1}. najlepsza`}</td>
+				<td>${bonus ? `<b style="color:#060">TAK</b> <small>+${fmt(g.bonus.coins - g.top.coins)} monet/falę</small>` : '<small>nie</small>'}</td></tr>`;
+		}).join('');
+		const cand = a.candidates.map(x => `<tr>
+			<td><b>${esc(x.c.name)}</b> <small>${x.c.x}|${x.c.y}</small></td>
+			<td class="num">${f1(x.after.longest.d)} <small>(teraz ${f1(L.d)})</small></td>
+			<td class="num">${f1(x.after.avg)} <small>(teraz ${f1(a.now.avg)})</small></td>
+			<td class="num">${x.takes}</td>
+			<td>${x.missing.length ? `<span style="color:#b00">brakuje: ${x.missing.join(', ')}</span>` : '<span style="color:#060">spełnia wymagania</span>'}</td></tr>`).join('');
+		const assignRows = a.ranking.map(g => `<tr><td><b>${tag(g.palace)}</b></td><td>${g.senders.length
+			? g.senders.slice().sort((p, q) => p.d - q.d).map(x => `${esc(x.v.name)} <small>(${f1(x.d)})</small>`).join(', ') : '<small>sama</small>'}</td></tr>`).join('');
+		return `
+			<p style="margin:8px 0 4px 0">Wioski z Pałacem: <b>${a.palaces.length}</b>, wysyłające: <b>${a.active.length - a.palaces.length}</b>${a.skipped ? `, pominięte: ${a.skipped}` : ''}.
+				Najdłuższa trasa: <b>${L ? `${f1(L.d)} pola` : '–'}</b>${L ? ` <small>(${esc(L.v.name)} → ${esc(L.p.name)}) – to ona wyznacza tempo fal</small>` : ''}</p>
+			<table class="vis" style="width:100%">
+				<tr><th colspan="8">Flagi i Bonus flagi – ranking wiosek z Pałacem</th></tr>
+				<tr><th>#</th><th>Pałac</th><th>Wiosek wysył.</th><th>Najdalej (pola)</th><th>Surowce/falę<br><small>każdego rodzaju</small></th>
+					<th>Monet/falę<br><small>bez flagi → fioletowa</small></th><th>Flaga</th><th>Bonus flagi<br><small>przy fioletowej</small></th></tr>
+				${rank}
+			</table>
+			<p style="margin:4px 0 8px 0"><small>Najlepszą flagę „Obniżenie kosztu monet” zakładaj na 1. miejscu, drugą na 2. itd. Fala = pakiet surowców (10% spichlerza) w każdej wiosce grupy.
+				Bonus flagi opłaca się przy intensywnych falach (ok. 30+ pakietów w 48 h); zmiana flagi kasuje bonus.</small></p>
+			<table class="vis" style="width:100%">
+				<tr><th colspan="5">Gdzie zbudować nowy Pałac – 5 najlepszych miejsc</th></tr>
+				<tr><th>Wioska</th><th>Najdłuższa trasa</th><th>Średnia trasa</th><th>Przejmie wiosek</th><th>Wymagania</th></tr>
+				${cand || '<tr><td colspan="5"><small>każda wioska ma już Pałac</small></td></tr>'}
+			</table>
+			<details style="margin-top:6px"><summary style="cursor:pointer"><b>Która wioska do którego Pałacu</b> <small>(w nawiasie odległość)</small></summary>
+				<table class="vis" style="width:100%;margin-top:4px">${assignRows}</table></details>`;
+	}
+
+	// ---------- Start ----------
+	function main() {
+		if (typeof game_data === 'undefined') { notify(`${NAME}: uruchom skrypt w grze.`); return; }
+		const url = location.href;
+		const onBuildings = game_data.screen === 'overview_villages' && $('#buildings_table').length > 0;
+		if (!onBuildings || !/[?&]page=-1(&|$)/.test(url)) {
+			const t = game_data.player.sitter && Number(game_data.player.sitter) > 0 ? '&t=' + game_data.player.id : '';
+			location.href = `/game.php?village=${game_data.village.id}${t}&screen=overview_villages&mode=buildings&group=0&page=-1`;
+			return;
+		}
+		const villages = readVillages();
+		if (!villages.length) { notify(`${NAME}: nie znalazłem wiosek w tabeli budynków.`, 'ErrorMessage'); return; }
+		render(loadSettings(), villages);
+	}
+
+	if (Date.now() - (window[NS + '_lastRun'] || 0) < 500) { return; } // gra potrafi wykonać skrót dwa razy naraz
+	window[NS + '_lastRun'] = Date.now();
+	try { main(); } catch (ex) {
+		notify(`${NAME}: błąd – ${ex && ex.message ? ex.message : ex}`, 'ErrorMessage');
+		console.error(NAME, ex);
+	}
+})();
