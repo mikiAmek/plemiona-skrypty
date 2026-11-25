@@ -1,14 +1,15 @@
 /*
- * Numerator Wiosek v1.2.2
+ * Numerator Wiosek v1.3.0
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
  *
  * Skrypt układa nazwy wiosek według numeracji, np. „Wioska 001”:
- *  - automatyczne wyspy – wioski leżące blisko siebie tworzą wyspę; największa dostaje serię 001…,
- *    następna 101…, kolejna 201…; w wyspie numery idą od środka na zewnątrz,
- *  - albo własne strefy – reguły: kontynent, odległość od punktu albo prostokąt współrzędnych.
- * Istniejące poprawne numery zostają, nowe wioski dostają pierwszy wolny numer w swojej serii.
+ *  - bez podziału – wszystkie wioski po kolei: 001, 002, 003…,
+ *  - automatycznie według skupisk – wioski leżące blisko siebie tworzą grupę; największa dostaje
+ *    numery 001…, następna 101…, kolejna 201…; w grupie numery idą od środka na zewnątrz,
+ *  - albo własne strefy – kontynent, odległość od punktu albo prostokąt współrzędnych.
+ * Istniejące poprawne numery zostają, nowe wioski dostają pierwszy wolny numer w swojej grupie.
  *
  * Najpierw „Podgląd” (nic się nie zmienia), potem każde kliknięcie „Zmień następną” (albo skrótu)
  * zmienia nazwę JEDNEJ wioski – przyciskiem zmiany nazwy gry. Przed pierwszą zmianą skrypt zapisuje
@@ -18,7 +19,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.2.2';
+	const VERSION = 'v1.3.0';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -30,7 +31,7 @@
 		text: 'Wioska',
 		pattern: 'Wioska {nr}',
 		digits: 3,
-		mode: 'islands',     // 'islands' – automatyczne wyspy; 'rules' – własne strefy
+		mode: 'islands',     // 'all' – bez podziału; 'islands' – automatycznie według skupisk; 'rules' – własne strefy
 		gap: 10,             // wyspy: maks. odległość między sąsiednimi wioskami (pola)
 		rules: 'K63 => 101\n* => 1',
 		keep: true,          // true – zostaw istniejące numery; false – przenumeruj od nowa
@@ -56,7 +57,7 @@
 		const s = Object.assign({}, DEFAULTS, storageGet('settings') || {});
 		s.digits = Math.min(6, Math.max(1, parseInt(s.digits, 10) || DEFAULTS.digits));
 		s.gap = Math.max(1, Number(s.gap) || DEFAULTS.gap);
-		if (!['islands', 'rules'].includes(s.mode)) { s.mode = DEFAULTS.mode; }
+		if (!['all', 'islands', 'rules'].includes(s.mode)) { s.mode = DEFAULTS.mode; }
 		if (!['textnr', 'nr', 'same', 'custom'].includes(s.style)) { s.style = DEFAULTS.style; }
 		if (!['center', 'point'].includes(s.origin)) { s.origin = DEFAULTS.origin; }
 		return s;
@@ -138,7 +139,7 @@
 			if (g.series === undefined) { while (used.has(next)) { next++; } g.series = next; used.add(next); }
 		});
 		groups.sort((a, b) => a.series - b.series);
-		groups.forEach((g, i) => { g.start = g.series * 100 + 1; g.label = `Wyspa ${i + 1}`; });
+		groups.forEach((g, i) => { g.start = g.series * 100 + 1; g.label = `Grupa ${i + 1}`; });
 		return groups;
 	}
 
@@ -234,6 +235,11 @@
 		let groups, outside = [];
 		if (s.mode === 'rules') {
 			({ groups, outside } = zones(villages, parseRules(s.rules)));
+		} else if (s.mode === 'all') {
+			// jedna grupa: wszystkie wioski od 001, od środka całego konta (albo od wskazanego punktu)
+			const n = villages.length || 1;
+			groups = [{ label: 'Wszystkie wioski', start: 1, members: villages.slice(),
+				center: { x: villages.reduce((t, v) => t + v.x, 0) / n, y: villages.reduce((t, v) => t + v.y, 0) / n } }];
 		} else {
 			groups = assignSeries(islands(villages, s.gap), s);
 		}
@@ -273,7 +279,7 @@
 				assigned.set(v.id, nr);
 			});
 			const maxNr = Math.max(...assigned.values());
-			if (maxNr >= nextStart) { warnings.push(`${g.label}: numery dochodzą do ${maxNr} i wchodzą na serię od ${nextStart} – zwiększ odstęp serii albo zmień strefy.`); }
+			if (maxNr >= nextStart) { warnings.push(`${g.label}: numery dochodzą do ${maxNr} i wchodzą na numery następnej grupy (od ${nextStart}) – zmień numery początkowe stref.`); }
 			ordered.forEach(v => {
 				const n = assigned.get(v.id);
 				const target = formatName(pattern, n, v, s.digits);
@@ -467,13 +473,14 @@
 						<small>– do „Tekst + numer” i „Ta sama nazwa dla wszystkich”</small></td></tr>
 					<tr><td>Cyfr numeru</td><td><input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px">
 						<small>– 3 → 001, 002…; 2 → 01, 02…; 1 → 1, 2…</small></td></tr>
-					<tr><th colspan="2">Podział na serie</th></tr>
-					<tr><td style="vertical-align:top">Sposób</td><td>
-						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatyczne wyspy</b></label>
-							– wioski oddalone od siebie najwyżej <input type="text" id="${NS}_gap" value="${s.gap}" style="width:35px"> pól to jedna wyspa
-							<br><small>największa wyspa dostaje serię 001…, następna 101…, kolejna 201…; wyspa z nadanymi już numerami zostaje przy swojej serii</small></div>
+					<tr><th colspan="2">Grupy wiosek <small style="font-weight:normal">– wioski w różnych miejscach mogą mieć osobne numery, np. 001… i 101…</small></th></tr>
+					<tr><td style="vertical-align:top">Podział</td><td>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="all" ${s.mode === 'all' ? 'checked' : ''}> <b>Bez podziału</b></label> – wszystkie wioski po kolei: 001, 002, 003…</div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatycznie według skupisk</b></label>
+							– wioski, między którymi jest najwyżej <input type="text" id="${NS}_gap" value="${s.gap}" style="width:35px"> pól, to jedna grupa
+							<br><small>największa grupa dostaje 001…, następna 101…, kolejna 201…; grupa z nadanymi już numerami zostaje przy swojej setce</small></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="rules" ${s.mode === 'rules' ? 'checked' : ''}> <b>Własne strefy</b></label>
-							<small>– wioska trafia do pierwszej pasującej strefy (od góry); „Wszystkie pozostałe” zostaw na końcu</small>
+							<small>– sam wybierasz obszary i numer początkowy; wioska trafia do pierwszej pasującej strefy (od góry), „Wszystkie pozostałe” zostaw na końcu</small>
 							<div style="overflow-x:auto"><table class="vis" id="${NS}_zones" style="width:100%;margin-top:3px">
 								<tr><th>#</th><th>Obszar</th><th>Gdzie</th><th>Od numeru</th><th>Inna nazwa w tej strefie <small>(opcjonalnie)</small></th><th></th></tr>
 								${rulesToZones(s.rules).map(zoneRowHtml).join('')}
@@ -481,10 +488,10 @@
 							<a href="#" id="${NS}_addzone">+ dodaj strefę</a></div>
 					</td></tr>
 					<tr><td style="vertical-align:top">Kolejność</td><td>
-						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="center" ${s.origin === 'center' ? 'checked' : ''}> od środka wyspy / strefy</label></div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="center" ${s.origin === 'center' ? 'checked' : ''}> od środka grupy / strefy</label></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="point" ${s.origin === 'point' ? 'checked' : ''}> od współrzędnych</label>
 							<input type="text" id="${NS}_point" value="${esc(s.point || (game_data.village.x + '|' + game_data.village.y))}" style="width:70px">
-							<small>– najbliższa wioska dostaje pierwszy numer w serii, dalej coraz dalsze</small></div>
+							<small>– najbliższa wioska dostaje pierwszy numer w grupie, dalej coraz dalsze</small></div>
 					</td></tr>
 					<tr><td>Numery</td><td>
 						<label><input type="radio" name="${NS}_keep" value="keep" ${s.keep ? 'checked' : ''}> zostaw istniejące, nowe wioski dostają wolne numery</label><br>
