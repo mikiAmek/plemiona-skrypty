@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.0.2
+ * Numerator Wiosek v1.1.0
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.0.2';
+	const VERSION = 'v1.1.0';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -32,7 +32,9 @@
 		mode: 'islands',     // 'islands' – automatyczne wyspy; 'rules' – własne strefy
 		gap: 10,             // wyspy: maks. odległość między sąsiednimi wioskami (pola)
 		rules: 'K63 => 101\n* => 1',
-		keep: true           // true – zostaw istniejące numery; false – przenumeruj od nowa
+		keep: true,          // true – zostaw istniejące numery; false – przenumeruj od nowa
+		origin: 'center',    // kolejność numerów: 'center' – od środka serii; 'point' – od wskazanych współrzędnych
+		point: ''            // np. '380|560'
 	};
 
 	// ---------- Narzędzia ----------
@@ -55,6 +57,7 @@
 		s.gap = Math.max(1, Number(s.gap) || DEFAULTS.gap);
 		if (!['islands', 'rules'].includes(s.mode)) { s.mode = DEFAULTS.mode; }
 		if (!['textnr', 'nr', 'same', 'custom'].includes(s.style)) { s.style = DEFAULTS.style; }
+		if (!['center', 'point'].includes(s.origin)) { s.origin = DEFAULTS.origin; }
 		return s;
 	}
 
@@ -205,9 +208,16 @@
 		} else {
 			groups = islands(villages, s.gap);
 		}
+		let origin = null;
+		if (s.origin === 'point') {
+			const m = String(s.point || '').match(/(\d{1,3})\|(\d{1,3})/);
+			if (!m) { throw 'Wpisz współrzędne punktu, od którego liczyć numery, np. 380|560.'; }
+			origin = { x: Number(m[1]), y: Number(m[2]) };
+		}
 		const rows = [];
 		const warnings = [];
 		groups.forEach((g, gi) => {
+			if (origin) { g.center = origin; } // numery po kolei od wskazanego punktu
 			const pattern = g.pattern || s.pattern;
 			if (!/\{nr\}/.test(pattern)) { throw `${g.label}: wzór „${pattern}” musi zawierać {nr}.`; }
 			const ordered = g.members.slice().sort((a, b) => dist(a, g.center) - dist(b, g.center) || a.id - b.id);
@@ -243,7 +253,7 @@
 		rows.sort((a, b) => a.group - b.group || a.nr - b.nr);
 		const summary = groups.map((g, gi) => {
 			const nrs = rows.filter(r => r.group === gi).map(r => r.nr);
-			return { label: g.label, count: g.members.length, from: Math.min(...nrs), to: Math.max(...nrs), center: g.center };
+			return { label: g.label, count: g.members.length, from: Math.min(...nrs), to: Math.max(...nrs), center: g.center, fromPoint: !!origin };
 		});
 		return { created: Date.now(), rows, summary, outside: outside.map(v => ({ id: v.id, name: v.name, x: v.x, y: v.y })), warnings };
 	}
@@ -336,6 +346,8 @@
 		s.gap = Math.max(1, Number(String($(`#${NS}_gap`).val() ?? '').replace(',', '.')) || DEFAULTS.gap);
 		s.rules = String($(`#${NS}_rules`).val() ?? s.rules);
 		s.keep = $(`input[name=${NS}_keep]:checked`).val() !== 'renumber';
+		s.origin = $(`input[name=${NS}_origin]:checked`).val() || 'center';
+		s.point = String($(`#${NS}_point`).val() ?? '').trim();
 		return s;
 	}
 
@@ -369,9 +381,15 @@
 							<textarea id="${NS}_rules" rows="4" style="width:95%;font-family:monospace">${esc(s.rules)}</textarea>
 							<br><small>obszary: <b>K63</b> (kontynent), <b>372|620 30</b> (do 30 pól od punktu), <b>360|540-410|580</b> (prostokąt), <b>*</b> (pozostałe)</small></div>
 					</td></tr>
+					<tr><td style="vertical-align:top">Kolejność</td><td>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="center" ${s.origin === 'center' ? 'checked' : ''}> od środka wyspy / strefy</label></div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="point" ${s.origin === 'point' ? 'checked' : ''}> od współrzędnych</label>
+							<input type="text" id="${NS}_point" value="${esc(s.point || (game_data.village.x + '|' + game_data.village.y))}" style="width:70px">
+							<small>– najbliższa wioska dostaje pierwszy numer w serii, dalej coraz dalsze</small></div>
+					</td></tr>
 					<tr><td>Numery</td><td>
 						<label><input type="radio" name="${NS}_keep" value="keep" ${s.keep ? 'checked' : ''}> zostaw istniejące, nowe wioski dostają wolne numery</label><br>
-						<label><input type="radio" name="${NS}_keep" value="renumber" ${s.keep ? '' : 'checked'}> przenumeruj wszystko od nowa (od środka serii)</label>
+						<label><input type="radio" name="${NS}_keep" value="renumber" ${s.keep ? '' : 'checked'}> przenumeruj wszystko od nowa (według kolejności wyżej)</label>
 					</td></tr>
 				</table>
 				<div style="margin-top:6px">
@@ -385,6 +403,7 @@
 			</div>`);
 		$('#' + NS).on('input change', 'input, textarea', () => storageSet('settings', readPanel()));
 		$('#' + NS).on('focus input', `#${NS}_pattern`, () => $(`input[name=${NS}_style][value=custom]`).prop('checked', true));
+		$('#' + NS).on('focus input', `#${NS}_point`, () => $(`input[name=${NS}_origin][value=point]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_gap`, () => $(`input[name=${NS}_mode][value=islands]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_rules`, () => $(`input[name=${NS}_mode][value=rules]`).prop('checked', true));
 		$('#' + NS).on('click', `#${NS}_preview`, () => {
@@ -431,7 +450,7 @@
 		const pending = pendingRows(plan);
 		const pendingIds = new Set(pending.map(r => r.id));
 		const summary = plan.summary.map(g => g.from !== undefined
-			? `<li><b>${esc(g.label)}</b>: ${g.count} wiosek, numery ${g.from}–${g.to}${g.center ? `, środek ok. ${Math.round(g.center.x)}|${Math.round(g.center.y)}` : ''}</li>`
+			? `<li><b>${esc(g.label)}</b>: ${g.count} wiosek, numery ${g.from}–${g.to}${g.center ? `, ${g.fromPoint ? 'liczone od' : 'środek ok.'} ${Math.round(g.center.x)}|${Math.round(g.center.y)}` : ''}</li>`
 			: `<li><b>${esc(g.label)}</b>: ${g.count} wiosek</li>`).join('');
 		const rows = plan.rows.map(r => `<tr${pendingIds.has(r.id) ? '' : ' style="opacity:.55"'}>
 			<td>${r.x}|${r.y}</td><td>${esc(r.old)}</td><td><b>${esc(r.target)}</b></td>
