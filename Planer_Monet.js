@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.1.0
+ * Planer Monet v1.2.0
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.1.0';
+	const VERSION = 'v1.2.0';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -205,7 +205,15 @@
 			try { $(`#${NS}_out`).html(results(analyse(villages, cur), cur)); }
 			catch (ex) { $(`#${NS}_out`).html(`<p style="color:#b00"><b>${esc(typeof ex === 'string' ? ex : 'błąd obliczeń.')}</b></p>`); if (typeof ex !== 'string') { console.error(NAME, ex); } }
 		};
-		$('#' + NS).on('input change', 'input', redraw);
+		$('#' + NS).on('input change', 'input:not([readonly])', redraw);
+		// [współrzędne]: pokaż listę „x|y x|y …” do skopiowania i spróbuj wstawić ją do schowka
+		$('#' + NS).on('click', `.${NS}_copy`, function (e) {
+			e.preventDefault();
+			const text = String($(this).data('coords'));
+			const box = $(`#${NS}_copybox`).show();
+			box.find('input').val(text).trigger('focus').trigger('select');
+			try { navigator.clipboard && navigator.clipboard.writeText(text).catch(() => {}); } catch (ex) { /* zostaje ręczne kopiowanie */ }
+		});
 		redraw();
 	}
 
@@ -222,7 +230,8 @@
 				<td class="num">${fmt(g.base.coins)} → ${fmt(g.top.coins)}</td>
 				<td>${i === 0 ? '<b>najlepsza</b>' : `${i + 1}. najlepsza`}</td>
 				<td>${bonus ? `<b style="color:#060">TAK</b> <small>+${fmt(g.bonus.coins - g.top.coins)} monet/falę</small>` : '<small>nie</small>'}</td>
-				<td>${g.senders.length ? g.senders.slice().sort((p, q) => p.d - q.d).map(x => `${esc(x.v.name)} <small>(${f1(x.d)})</small>`).join(', ') : '<small>tylko własne surowce</small>'}</td></tr>`;
+				<td>${g.senders.length ? g.senders.slice().sort((p, q) => p.d - q.d).map(x => `${esc(x.v.name)} <small>(${f1(x.d)})</small>`).join(', ')
+					+ ` <a href="#" class="${NS}_copy" data-coords="${g.senders.map(x => `${x.v.x}|${x.v.y}`).join(' ')}" title="współrzędne do „Dodaj współrzędne” w grupach ręcznych">[współrzędne]</a>` : '<small>tylko własne surowce</small>'}</td></tr>`;
 		}).join('');
 		const cand = a.candidates.map(x => `<tr>
 			<td><b>${esc(x.c.name)}</b> <small>${x.c.x}|${x.c.y}</small></td>
@@ -241,6 +250,8 @@
 					<th>Monet/falę<br><small>bez flagi → fioletowa</small></th><th>Flaga</th><th>Bonus flagi<br><small>przy fioletowej</small></th><th>Pobieraj surowce z <small>(odległość)</small></th></tr>
 				${rank}
 			</table>
+			<p style="margin:4px 0 2px 0">Współrzędne wszystkich Pałaców do bicia (np. grupa „Monety”): <a href="#" class="${NS}_copy" data-coords="${a.ranking.map(g => `${g.palace.x}|${g.palace.y}`).join(' ')}">[współrzędne]</a></p>
+			<div id="${NS}_copybox" style="display:none;margin:2px 0"><input type="text" readonly style="width:95%"> <br><small>Skopiowane do schowka (jeśli przeglądarka pozwoliła) – wklej w Grupy &gt; Ręczne grupy &gt; „Dodaj współrzędne”.</small></div>
 			<p style="margin:4px 0 8px 0"><small>Najlepszą flagę „Obniżenie kosztu monet” zakładaj na 1. miejscu, drugą na 2. itd. Fala = pakiet surowców (10% spichlerza) w każdej wiosce grupy.
 				Bonus flagi opłaca się przy intensywnych falach (ok. 30+ pakietów w 48 h); zmiana flagi kasuje bonus.</small></p>
 			<table class="vis" style="width:100%">
