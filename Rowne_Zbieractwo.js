@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.7
+ * Równe Zbieractwo v2.6.8
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.7';
+	const VERSION = 'v2.6.8';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -510,10 +510,10 @@
 					<div style="margin:2px 0 8px 0">
 						<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label>
 						<br><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę)</small>
-						<div style="margin:3px 0 0 22px">
-							<label><input type="radio" name="${NS}_range" value="off" ${settings.rangeOn ? '' : 'checked'}> bez ograniczeń</label><br>
-							<label><input type="radio" name="${NS}_range" value="on" ${settings.rangeOn ? 'checked' : ''}> w zakresie</label>
-							<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:45px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:45px">
+						<div style="margin:5px 0 0 22px;line-height:24px">
+							<div><label><input type="radio" name="${NS}_range" value="off" ${settings.rangeOn ? '' : 'checked'}> bez ograniczeń</label></div>
+							<div><label><input type="radio" name="${NS}_range" value="on" ${settings.rangeOn ? 'checked' : ''}> w zakresie</label>
+							<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:45px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:45px"></div>
 						</div>
 					</div>
 					<div style="margin:0 0 8px 0">
