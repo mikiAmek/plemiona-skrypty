@@ -1,5 +1,5 @@
 /*
- * Licznik Fejków v1.0.0
+ * Licznik Fejków v1.0.1
  * Autor: Mavionis
  *
  * Przegląd > Rozkazy: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Rozkazy ze wszystkimi rozkazami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Licznik Fejków';
-	const VERSION = 'v1.0.0';
+	const VERSION = 'v1.0.1';
 	const NS = 'LicznikFejkow';
 	const KEEP_DAYS = 30;                // tyle dni trzymamy numery rozkazów; starsze zostają tylko jako liczby dzienne
 	const DAY = 86400000;
@@ -221,7 +221,8 @@
 	async function main() {
 		if (typeof game_data === 'undefined') { notify(`${NAME}: uruchom skrypt w grze.`); return; }
 		const url = location.href;
-		const onCommands = /[?&]screen=overview_villages(&|$)/.test(url) && $('#commands_table').length > 0;
+		// bez rozkazów gra nie pokazuje tabeli – wtedy liczymy zero w drodze, a licznik i tak się pokazuje
+		const onCommands = game_data.screen === 'overview_villages' && (game_data.mode === 'commands' || /[?&]mode=commands(&|$)/.test(url));
 		if (!onCommands || !/[?&]page=-1(&|$)/.test(url)) {
 			const t = game_data.player.sitter && Number(game_data.player.sitter) > 0 ? '&t=' + game_data.player.id : '';
 			location.href = `/game.php?village=${game_data.village.id}${t}&screen=overview_villages&mode=commands&type=all&page=-1`;
