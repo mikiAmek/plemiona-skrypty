@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.3.0
+ * Planer Monet v1.4.0
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.3.0';
+	const VERSION = 'v1.4.0';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -25,8 +25,7 @@
 	const PALACE_REQ = { main: 20, smith: 20, market: 10 };
 	const REQ_NAMES = { main: 'Ratusz', smith: 'Kuźnia', market: 'Rynek' };
 
-	const DEFAULTS = { skip: '', useQueued: true, bonusMin: 6, choice: null };
-	const FAR = 10;                                              // wioski dalej od każdego Pałacu nie biorą udziału
+	const DEFAULTS = { skip: '', useQueued: true, bonusMin: 6, choice: null, far: 10, pace: 'fast' };
 
 	// ---------- Narzędzia ----------
 	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -46,6 +45,8 @@
 		const s = Object.assign({}, DEFAULTS, storageGet('settings') || {});
 		s.bonusMin = Math.max(1, parseInt(s.bonusMin, 10) || DEFAULTS.bonusMin);
 		s.choice = Number(s.choice) || null;
+		s.far = Math.max(1, Number(String(s.far).replace(',', '.')) || DEFAULTS.far);
+		if (!['fast', 'calm'].includes(s.pace)) { s.pace = DEFAULTS.pace; }
 		return s;
 	}
 
@@ -116,8 +117,8 @@
 		const isPalace = v => v.palace || (s.useQueued && v.queuedPalace);
 		const allPalaces = villages.filter(v => isPalace(v) && !skip(v));
 		if (!allPalaces.length) { throw 'nie ma żadnej wioski z Pałacem.'; }
-		// wioski dalej niż FAR pól od każdego Pałacu nie biorą udziału (np. osobna wyspa)
-		const tooFar = villages.filter(v => !skip(v) && !isPalace(v) && Math.min(...allPalaces.map(p => dist(v, p))) > FAR);
+		// wioski dalej niż s.far pól od każdego Pałacu nie biorą udziału (np. osobna wyspa)
+		const tooFar = villages.filter(v => !skip(v) && !isPalace(v) && Math.min(...allPalaces.map(p => dist(v, p))) > s.far);
 		const active = villages.filter(v => !skip(v) && !tooFar.includes(v));
 		// Warianty: ile Pałaców bije monety i jaka jest wtedy najdłuższa trasa kupców. Mniej Pałaców = mniej flag
 		// do pilnowania i większe grupy, ale dłuższe trasy i wolniejsze fale. Zdjęty Pałac wysyła surowce jak zwykła wioska.
@@ -126,7 +127,7 @@
 		const keep = (list) => {
 			const r = assign(active, list);
 			const d = r.longest ? r.longest.d : 0;
-			if (d > FAR + 1e-9) { return; }
+			if (d > s.far + 1e-9) { return; }
 			const old = variants.get(list.length);
 			if (!old || d < old.longest - 1e-9) { variants.set(list.length, { palaces: list.slice(), longest: d }); }
 		};
@@ -144,7 +145,7 @@
 			keep(cur);
 		}
 		// 2) dla progów co 0,5 pola: po kolei Pałac, który obejmie najwięcej jeszcze nieobjętych wiosek
-		for (let limit = Math.ceil((best.longest ? best.longest.d : 0) * 2) / 2; limit <= FAR; limit += 0.5) {
+		for (let limit = Math.ceil((best.longest ? best.longest.d : 0) * 2) / 2; limit <= s.far; limit += 0.5) {
 			const cover = [];
 			let left = active.slice();
 			while (left.length) {
@@ -163,9 +164,13 @@
 		// tylko warianty, w których mniej Pałaców naprawdę wydłuża trasę mniej niż wariant z jeszcze mniejszą liczbą
 		const list = [...variants.entries()].map(([count, v]) => Object.assign({ count }, v)).sort((a, b) => b.count - a.count)
 			.filter((v, i, arr) => !arr.some(o => o.count < v.count && o.longest <= v.longest + 1e-9));
-		// zalecany: najmniej „kosztu” = liczba Pałaców + 2 × najdłuższa trasa (1 pole trasy ≈ 2 Pałace do pilnowania)
+		// Zalecany wariant zależy od tempa:
+		//  - intensywne fale: liczy się czas powrotu kupców → kompromis: liczba Pałaców + 2 × najdłuższa trasa
+		//    (1 pole trasy ≈ 2 Pałace do pilnowania),
+		//  - spokojnie: czas nie gra roli → jak najmniej Pałaców (najlepsze flagi w kilku dużych grupach).
 		const score = v => v.count + 2 * v.longest;
-		const recommended = list.reduce((m, v) => (score(v) < score(m) - 1e-9 ? v : m), list[list.length - 1]);
+		const recommended = s.pace === 'calm' ? list[list.length - 1]
+			: list.reduce((m, v) => (score(v) < score(m) - 1e-9 ? v : m), list[list.length - 1]);
 		const chosen = list.find(v => v.count === s.choice) || recommended;
 		const palaces = chosen.palaces;
 		const resting = allPalaces.filter(p => !palaces.includes(p));
@@ -200,6 +205,11 @@
 					<tr><th colspan="2">Ustawienia</th></tr>
 					<tr><td style="width:210px">Pomiń wioski</td><td><input type="text" id="${NS}_skip" value="${esc(s.skip)}" style="width:220px" placeholder="np. 101-106">
 						<small>– opcjonalnie; nie biorą udziału; numery, zakresy albo nazwy po przecinku</small></td></tr>
+					<tr><td style="vertical-align:top">Jak bijesz monety</td><td>
+						<label><input type="radio" name="${NS}_pace" value="fast" ${s.pace === 'fast' ? 'checked' : ''}> <b>intensywnie</b></label> <small>– pakiet za pakietem; liczy się czas powrotu kupców, więc krótsze trasy i więcej Pałaców</small><br>
+						<label><input type="radio" name="${NS}_pace" value="calm" ${s.pace === 'calm' ? 'checked' : ''}> <b>spokojnie</b></label> <small>– pakiety od czasu do czasu; trasa nie gra roli, więc jak najmniej Pałaców i najlepsze flagi w kilku dużych grupach</small></td></tr>
+					<tr><td>Kupcy najdalej</td><td>do <input type="text" id="${NS}_far" value="${String(s.far).replace('.', ',')}" style="width:35px"> pól
+						<small>– żadna trasa nie będzie dłuższa; wioski dalej od każdego Pałacu pomijam. Zwiększ, jeśli Twoje wioski leżą daleko od siebie</small></td></tr>
 					<tr><td>Pałac w budowie</td><td><label><input type="checkbox" id="${NS}_queued" ${s.useQueued ? 'checked' : ''}> licz jak gotowy Pałac</label></td></tr>
 					<tr><td>Bonus flagi</td><td>gdy grupa ma co najmniej <input type="text" id="${NS}_bonus" value="${s.bonusMin}" style="width:30px"> wiosek wysyłających</td></tr>
 				</table>
@@ -209,12 +219,15 @@
 			const cur = {
 				skip: String($(`#${NS}_skip`).val()),
 				choice: (storageGet('settings') || {}).choice || null,
+				pace: $(`input[name=${NS}_pace]:checked`).val() || DEFAULTS.pace,
+				far: Math.max(1, Number(String($(`#${NS}_far`).val()).replace(',', '.')) || DEFAULTS.far),
 				useQueued: $(`#${NS}_queued`).is(':checked'), bonusMin: Math.max(1, parseInt($(`#${NS}_bonus`).val(), 10) || DEFAULTS.bonusMin)
 			};
 			storageSet('settings', cur);
 			try { $(`#${NS}_out`).html(results(analyse(villages, cur), cur)); }
 			catch (ex) { $(`#${NS}_out`).html(`<p style="color:#b00"><b>${esc(typeof ex === 'string' ? ex : 'błąd obliczeń.')}</b></p>`); if (typeof ex !== 'string') { console.error(NAME, ex); } }
 		};
+		$('#' + NS).on('change', `input[name=${NS}_pace], #${NS}_far`, () => { storageSet('settings', Object.assign(loadSettings(), { choice: null })); });
 		$('#' + NS).on('input change', 'input:not([readonly])', redraw);
 		$('#' + NS).on('click', `.${NS}_choose`, function (e) {
 			e.preventDefault();
@@ -264,7 +277,7 @@
 				<table class="vis" style="margin-top:4px">
 					<tr><th>Pałaców</th><th>Najdłuższa trasa (pola)</th><th></th><th></th></tr>${variants}</table>
 				<small>Mniej Pałaców = mniej flag do pilnowania i większe grupy, ale dłuższe trasy kupców i wolniejsze fale.
-					Zalecany wariant to rozsądny kompromis (1 pole trasy liczę jak 2 Pałace do pilnowania).</small></details>
+					Zalecany wariant zależy od ustawienia „Jak bijesz monety”.</small></details>
 			<p style="margin:8px 0 4px 0">Bij monety w <b>${a.palaces.length}</b> Pałacach, wysyłające: <b>${a.active.length - a.palaces.length}</b>${a.skipped ? `, pominięte: ${a.skipped}` : ''}.
 				${a.resting.length ? `<br>Pałace, które lepiej niech <b>wysyłają</b>, a nie biją: <b>${a.resting.length <= 12 ? a.resting.map(v => esc(v.name)).join(', ') : a.resting.length + ' wiosek'}</b> <small>– wysyłają surowce jak zwykłe wioski</small>` : ''}
 				${a.tooFar.length ? `<br>Za daleko od Pałaców, pomijam: <small>${a.tooFar.map(v => esc(v.name)).join(', ')}</small>` : ''}<br>
