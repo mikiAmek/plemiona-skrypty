@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.1.2
+ * Numerator Wiosek v1.1.3
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.1.2';
+	const VERSION = 'v1.1.3';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -104,13 +104,41 @@
 			if (!map.has(r)) { map.set(r, []); }
 			map.get(r).push(v);
 		});
-		// największa wyspa pierwsza (seria 001), dalej 101, 201…
 		return [...map.values()]
 			.sort((a, b) => b.length - a.length || Math.min(...a.map(v => v.id)) - Math.min(...b.map(v => v.id)))
-			.map((members, i) => {
+			.map(members => {
 				const center = { x: members.reduce((t, v) => t + v.x, 0) / members.length, y: members.reduce((t, v) => t + v.y, 0) / members.length };
-				return { label: `Wyspa ${i + 1}`, start: i * 100 + 1, pattern: null, center, members };
+				return { label: '', start: null, pattern: null, center, members };
 			});
+	}
+
+	// Serie dla wysp. Przy „zostaw istniejące” wyspa zatrzymuje serię, w której jest większość jej numerów
+	// (np. wyspa w K63 z numerami 101–106 zostaje przy 1xx, nawet gdy kiedyś urośnie ponad główną).
+	// Pozostałe dostają kolejne wolne serie: największa 001, następna 101, kolejna 201…
+	function assignSeries(groups, s) {
+		const used = new Set();
+		const seriesOf = v => {
+			let nr = numberFromName(s.pattern, v.name, v);
+			if (nr === null) { const m = v.name.match(/(\d+)\s*$/); nr = m ? parseInt(m[1], 10) : null; }
+			// liczby dłuższe niż ustawiona liczba cyfr (np. „5656” przy 3 cyfrach) to nie numery wiosek
+			return nr !== null && nr >= 1 && nr < Math.pow(10, s.digits) ? Math.floor((nr - 1) / 100) : null;
+		};
+		if (s.keep) {
+			groups.forEach(g => {
+				const votes = new Map();
+				g.members.forEach(v => { const k = seriesOf(v); if (k !== null) { votes.set(k, (votes.get(k) || 0) + 1); } });
+				const best = [...votes.entries()].filter(([k]) => !used.has(k)).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+				// seria musi mieć poparcie co najmniej połowy wiosek wyspy, inaczej to przypadkowe liczby w nazwach
+				if (best && best[1] * 2 >= g.members.length) { g.series = best[0]; used.add(best[0]); }
+			});
+		}
+		let next = 0;
+		groups.forEach(g => {
+			if (g.series === undefined) { while (used.has(next)) { next++; } g.series = next; used.add(next); }
+		});
+		groups.sort((a, b) => a.series - b.series);
+		groups.forEach((g, i) => { g.start = g.series * 100 + 1; g.label = `Wyspa ${i + 1}`; });
+		return groups;
 	}
 
 	// Strefy: „obszar => numer początkowy [=> wzór]”, sprawdzane od góry
@@ -206,7 +234,7 @@
 		if (s.mode === 'rules') {
 			({ groups, outside } = zones(villages, parseRules(s.rules)));
 		} else {
-			groups = islands(villages, s.gap);
+			groups = assignSeries(islands(villages, s.gap), s);
 		}
 		let origin = null;
 		if (s.origin === 'point') {
@@ -359,7 +387,7 @@
 				#${NS} input[type=radio]{vertical-align:middle;margin:0 3px 0 0}#${NS} input[type=text]{vertical-align:middle}
 				#${NS} .nw-opt{margin:0 0 6px 0;line-height:22px}#${NS} small{color:#5a4a2a}</style>`);
 		}
-		$('#content_value').prepend(`
+		$($('#content_value').length ? '#content_value' : '#mobileContent').first().prepend(`
 			<div id="${NS}" class="vis" style="padding:8px;margin-bottom:10px">
 				<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
 				<table class="vis" style="width:100%">
@@ -377,7 +405,7 @@
 					<tr><td style="vertical-align:top">Sposób</td><td>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatyczne wyspy</b></label>
 							– wioski oddalone od siebie najwyżej <input type="text" id="${NS}_gap" value="${s.gap}" style="width:35px"> pól to jedna wyspa
-							<br><small>największa wyspa dostaje serię 001…, następna 101…, kolejna 201…</small></div>
+							<br><small>największa wyspa dostaje serię 001…, następna 101…, kolejna 201…; wyspa z nadanymi już numerami zostaje przy swojej serii</small></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="rules" ${s.mode === 'rules' ? 'checked' : ''}> <b>Własne strefy</b></label>
 							<small>– jeden wiersz = „obszar => numer początkowy [=> własny wzór]”, sprawdzane od góry</small><br>
 							<textarea id="${NS}_rules" rows="4" style="width:95%;font-family:monospace">${esc(s.rules)}</textarea>
