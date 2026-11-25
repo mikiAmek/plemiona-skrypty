@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.1.4
+ * Numerator Wiosek v1.2.0
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,11 +18,12 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.1.4';
+	const VERSION = 'v1.2.0';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
 	const MAX_BACKUPS = 5;               // tyle ostatnich kopii nazw trzymamy
+	const LIST_OPEN_MAX = 30;            // dłuższa lista w podglądzie startuje zwinięta i tylko z wioskami do zmiany
 
 	const DEFAULTS = {
 		style: 'textnr',     // 'textnr' – tekst + numer; 'nr' – tylko numer; 'same' – ta sama nazwa; 'custom' – własny wzór
@@ -148,9 +149,9 @@
 			const line = raw.trim();
 			if (!line || line.startsWith('#')) { return; }
 			const parts = line.split('=>').map(p => p.trim());
-			if (parts.length < 2) { throw `Strefy, wiersz ${n + 1}: brakuje „=> numer” („${line}”).`; }
+			if (parts.length < 2) { throw `Strefa ${n + 1}: brakuje numeru początkowego.`; }
 			const start = parseInt(parts[1], 10);
-			if (!(start >= 0)) { throw `Strefy, wiersz ${n + 1}: nieprawidłowy numer początkowy („${parts[1]}”).`; }
+			if (!(start >= 0)) { throw `Strefa ${n + 1}: wpisz numer początkowy, np. 1 albo 101.`; }
 			const area = parts[0];
 			let m, rule;
 			if (area === '*') {
@@ -165,7 +166,7 @@
 				const x1 = Math.min(+m[1], +m[3]), x2 = Math.max(+m[1], +m[3]), y1 = Math.min(+m[2], +m[4]), y2 = Math.max(+m[2], +m[4]);
 				rule = { test: v => v.x >= x1 && v.x <= x2 && v.y >= y1 && v.y <= y2, center: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }, desc: `${x1}|${y1}–${x2}|${y2}` };
 			} else {
-				throw `Strefy, wiersz ${n + 1}: nie rozpoznaję obszaru „${area}”. Przykłady: K63, 372|620 30, 360|540-410|580, *`;
+				throw `Strefa ${n + 1}: uzupełnij obszar – kontynent (np. 63), punkt i promień albo dwa rogi prostokąta (np. 360|540).`;
 			}
 			rules.push(Object.assign(rule, { start, pattern: parts[2] || null }));
 		});
@@ -365,6 +366,62 @@
 		return p && Date.now() - p.created < PLAN_TTL ? p : null;
 	};
 
+	// ---------- Edytor stref (tabela) <-> zapis tekstowy reguł ----------
+	// Strefy trzymamy w ustawieniach jako tekst „obszar => numer [=> wzór]” (ten sam format czyta parseRules),
+	// a w panelu pokazujemy je jako tabelę z polami.
+	function rulesToZones(text) {
+		const out = [];
+		String(text || '').split('\n').forEach(raw => {
+			const parts = raw.split('=>').map(p => p.trim());
+			if (parts.length < 2 || !parts[0]) { return; }
+			const area = parts[0], z = { start: parts[1], pattern: parts[2] || '' };
+			const val = v => (v === '?' ? '' : v);
+			let m;
+			if (area === '*') { z.type = '*'; }
+			else if ((m = area.match(/^K?(\d{0,2})$/i))) { z.type = 'K'; z.k = m[1]; }
+			else if ((m = area.match(/^(\S*)\s+(\S*)$/)) && !/-/.test(area)) { z.type = 'R'; z.pt = val(m[1]); z.r = val(m[2]); }
+			else if ((m = area.match(/^(\S*)\s*[-–]\s*(\S*)$/))) { z.type = 'P'; z.p1 = val(m[1]); z.p2 = val(m[2]); }
+			else { return; }
+			out.push(z);
+		});
+		return out.length ? out : [{ type: '*', start: 1, pattern: '' }];
+	}
+
+	function zoneRowHtml(z) {
+		const opt = (v, t) => `<option value="${v}" ${z.type === v ? 'selected' : ''}>${t}</option>`;
+		const inp = (cls, val, w, ph) => `<input type="text" class="${cls}" value="${esc(val ?? '')}" placeholder="${ph}" style="width:${w}px">`;
+		const where = {
+			K: `K ${inp('nw-k', z.k, 30, '63')}`,
+			R: `do ${inp('nw-r', z.r, 30, '15')} pól od ${inp('nw-pt', z.pt, 60, 'x|y')}`,
+			P: `od ${inp('nw-p1', z.p1, 60, 'x|y')} do ${inp('nw-p2', z.p2, 60, 'x|y')}`,
+			'*': '<small>wioski, które nie pasują do stref wyżej</small>'
+		}[z.type];
+		return `<tr class="nw-zone"><td class="nw-no"></td>
+			<td><select class="nw-type">${opt('K', 'Kontynent')}${opt('R', 'Odległość od punktu')}${opt('P', 'Prostokąt')}${opt('*', 'Wszystkie pozostałe')}</select></td>
+			<td style="white-space:nowrap">${where}</td>
+			<td>${inp('nw-start', z.start, 45, '1')}</td>
+			<td>${inp('nw-pat', z.pattern, 120, 'jak wyżej')}</td>
+			<td style="white-space:nowrap"><a href="#" class="nw-up" title="wyżej">▲</a> <a href="#" class="nw-down" title="niżej">▼</a> <a href="#" class="nw-del" title="usuń">✕</a></td></tr>`;
+	}
+
+	function readZoneRow(tr) {
+		const v = cls => String(tr.find('.' + cls).val() ?? '').trim();
+		return { type: tr.find('.nw-type').val(), k: v('nw-k'), r: v('nw-r'), pt: v('nw-pt'), p1: v('nw-p1'), p2: v('nw-p2'), start: v('nw-start'), pattern: v('nw-pat') };
+	}
+
+	const readZones = () => $(`#${NS}_zones tr.nw-zone`).map(function () { return readZoneRow($(this)); }).get();
+
+	const renumberZones = () => $(`#${NS}_zones tr.nw-zone .nw-no`).each(function (i) { $(this).text(i + 1); });
+
+	function zonesToRules(list) {
+		return list.map(z => {
+			// puste pola zapisujemy jako „?”, żeby niedokończona strefa nie zmieniła typu po ponownym otwarciu
+			const f = v => v || '?';
+			const area = { K: 'K' + z.k, R: `${f(z.pt)} ${f(z.r)}`, P: `${f(z.p1)}-${f(z.p2)}`, '*': '*' }[z.type];
+			return `${area} => ${z.start}` + (z.pattern ? ` => ${z.pattern}` : '');
+		}).join('\n');
+	}
+
 	// ---------- Panel ----------
 	function readPanel() {
 		const s = loadSettings();
@@ -374,7 +431,7 @@
 		s.digits = Math.min(6, Math.max(1, parseInt($(`#${NS}_digits`).val(), 10) || DEFAULTS.digits));
 		s.mode = $(`input[name=${NS}_mode]:checked`).val() || 'islands';
 		s.gap = Math.max(1, Number(String($(`#${NS}_gap`).val() ?? '').replace(',', '.')) || DEFAULTS.gap);
-		s.rules = String($(`#${NS}_rules`).val() ?? s.rules);
+		if ($(`#${NS}_zones`).length) { s.rules = zonesToRules(readZones()); }
 		s.keep = $(`input[name=${NS}_keep]:checked`).val() !== 'renumber';
 		s.origin = $(`input[name=${NS}_origin]:checked`).val() || 'center';
 		s.point = String($(`#${NS}_point`).val() ?? '').trim();
@@ -408,9 +465,12 @@
 							– wioski oddalone od siebie najwyżej <input type="text" id="${NS}_gap" value="${s.gap}" style="width:35px"> pól to jedna wyspa
 							<br><small>największa wyspa dostaje serię 001…, następna 101…, kolejna 201…; wyspa z nadanymi już numerami zostaje przy swojej serii</small></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="rules" ${s.mode === 'rules' ? 'checked' : ''}> <b>Własne strefy</b></label>
-							<small>– jeden wiersz = „obszar => numer początkowy [=> własny wzór]”, sprawdzane od góry</small><br>
-							<textarea id="${NS}_rules" rows="4" style="width:95%;font-family:monospace">${esc(s.rules)}</textarea>
-							<br><small>obszary: <b>K63</b> (kontynent), <b>372|620 30</b> (do 30 pól od punktu), <b>360|540-410|580</b> (prostokąt), <b>*</b> (pozostałe)</small></div>
+							<small>– wioska trafia do pierwszej pasującej strefy (od góry); „Wszystkie pozostałe” zostaw na końcu</small>
+							<table class="vis" id="${NS}_zones" style="width:100%;margin-top:3px">
+								<tr><th>#</th><th>Obszar</th><th>Gdzie</th><th>Od numeru</th><th>Własny wzór <small>(opcjonalnie)</small></th><th></th></tr>
+								${rulesToZones(s.rules).map(zoneRowHtml).join('')}
+							</table>
+							<a href="#" id="${NS}_addzone">+ dodaj strefę</a></div>
 					</td></tr>
 					<tr><td style="vertical-align:top">Kolejność</td><td>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_origin" value="center" ${s.origin === 'center' ? 'checked' : ''}> od środka wyspy / strefy</label></div>
@@ -436,7 +496,31 @@
 		$('#' + NS).on('focus input', `#${NS}_pattern`, () => $(`input[name=${NS}_style][value=custom]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_point`, () => $(`input[name=${NS}_origin][value=point]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_gap`, () => $(`input[name=${NS}_mode][value=islands]`).prop('checked', true));
-		$('#' + NS).on('focus input', `#${NS}_rules`, () => $(`input[name=${NS}_mode][value=rules]`).prop('checked', true));
+		// edytor stref: każda zmiana w tabeli włącza „Własne strefy”
+		const zonesChanged = () => { $(`input[name=${NS}_mode][value=rules]`).prop('checked', true); renumberZones(); storageSet('settings', readPanel()); };
+		$('#' + NS).on('focus', `#${NS}_zones input, #${NS}_zones select`, () => $(`input[name=${NS}_mode][value=rules]`).prop('checked', true));
+		$('#' + NS).on('change', `#${NS}_zones select`, function () {
+			const tr = $(this).closest('tr');
+			tr.replaceWith(zoneRowHtml(Object.assign(readZoneRow(tr), { type: $(this).val() })));
+			zonesChanged();
+		});
+		$('#' + NS).on('click', `#${NS}_addzone`, e => {
+			e.preventDefault();
+			const rows = $(`#${NS}_zones tr.nw-zone`);
+			const last = rows.last();
+			const zone = { type: 'R', pt: '', r: 15, start: rows.length * 100 + 1, pattern: '' };
+			// nowa strefa przed „Wszystkie pozostałe”, żeby tamta została na końcu
+			if (last.length && readZoneRow(last).type === '*') { last.before(zoneRowHtml(zone)); } else { $(`#${NS}_zones`).append(zoneRowHtml(zone)); }
+			zonesChanged();
+		});
+		$('#' + NS).on('click', `#${NS}_zones .nw-up, #${NS}_zones .nw-down, #${NS}_zones .nw-del`, function (e) {
+			e.preventDefault();
+			const tr = $(this).closest('tr');
+			if ($(this).hasClass('nw-up')) { tr.prev('tr.nw-zone').before(tr); }
+			else if ($(this).hasClass('nw-down')) { tr.next('tr.nw-zone').after(tr); }
+			else { tr.remove(); }
+			zonesChanged();
+		});
 		$('#' + NS).on('click', `#${NS}_preview`, () => {
 			try {
 				const plan = createPlan(readVillages(), readPanel());
@@ -459,6 +543,7 @@
 			storageSet('plan', plan);
 			renderPlan(plan);
 		});
+		renumberZones();
 		renderBackupInfo();
 	}
 
@@ -483,7 +568,7 @@
 		const summary = plan.summary.map(g => g.from !== undefined
 			? `<li><b>${esc(g.label)}</b>: ${g.count} wiosek, numery ${g.from}–${g.to}${g.center ? `, ${g.fromPoint ? 'liczone od' : 'środek ok.'} ${Math.round(g.center.x)}|${Math.round(g.center.y)}` : ''}</li>`
 			: `<li><b>${esc(g.label)}</b>: ${g.count} wiosek</li>`).join('');
-		const rows = plan.rows.map(r => `<tr${pendingIds.has(r.id) ? '' : ' style="opacity:.55"'}>
+		const rows = plan.rows.map(r => `<tr${pendingIds.has(r.id) ? '' : ' class="nw-same" style="opacity:.55"'}>
 			<td>${r.x}|${r.y}</td><td>${esc(r.old)}</td><td><b>${esc(r.target)}</b></td>
 			<td>${r.tooLong ? `<span style="color:#b00">za długa (maks. ${r.maxLen})</span>` : pendingIds.has(r.id) ? 'do zmiany' : 'bez zmian'}</td></tr>`).join('');
 		$(`#${NS}_plan`).html(`
@@ -491,8 +576,15 @@
 			${plan.outside.length ? `<p><small>Poza strefami (bez zmian): ${plan.outside.map(v => esc(v.name)).join(', ')}</small></p>` : ''}
 			${plan.warnings.map(w => `<p style="color:#b00"><b>Uwaga:</b> ${esc(w)}</p>`).join('')}
 			<p>Do zmiany: <b>${pending.length}</b> z ${plan.rows.length}. Każde kliknięcie „Zmień następną” (albo skrótu) zmienia jedną wioskę.</p>
-			<div style="max-height:320px;overflow:auto"><table class="vis" style="width:100%">
-				<tr><th>Wioska</th><th>Obecna nazwa</th><th>Nowa nazwa</th><th>Stan</th></tr>${rows}</table></div>`);
+			<details id="${NS}_list" ${plan.rows.length <= LIST_OPEN_MAX ? 'open' : ''}>
+				<summary style="cursor:pointer"><b>Lista wiosek</b> (${plan.rows.length}) – pokaż / ukryj</summary>
+				<label style="display:block;margin:4px 0"><input type="checkbox" id="${NS}_onlychanged" ${plan.rows.length > LIST_OPEN_MAX ? 'checked' : ''}> pokaż tylko do zmiany</label>
+				<div style="max-height:320px;overflow:auto"><table class="vis" style="width:100%" id="${NS}_listtable">
+					<tr><th>Wioska</th><th>Obecna nazwa</th><th>Nowa nazwa</th><th>Stan</th></tr>${rows}</table></div>
+			</details>`);
+		const filter = () => $(`#${NS}_listtable tr.nw-same`).toggle(!$(`#${NS}_onlychanged`).is(':checked'));
+		$(`#${NS}_onlychanged`).on('change', filter);
+		filter();
 		renderProgress(plan);
 	}
 
