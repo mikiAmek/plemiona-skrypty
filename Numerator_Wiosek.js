@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.0.1
+ * Numerator Wiosek v1.0.2
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.0.1';
+	const VERSION = 'v1.0.2';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -61,6 +61,10 @@
 	// ---------- Wioski z bieżącej strony przeglądu ----------
 	// Współrzędne zapamiętujemy przy pierwszym odczycie – po zmianie nazwy gra może pokazać w etykiecie
 	// samą nową nazwę (bez „(x|y) K..”), a wioska nie może wtedy wypaść z listy.
+	// Nazwa wioski z etykiety gry. Po zmianie nazwy gra zapisuje nową nazwę przez jQuery .data('text'),
+	// a atrybut data-text w HTML zostaje stary – dlatego najpierw .data(), potem atrybut.
+	const labelName = label => String(label.data('text') ?? label.attr('data-text') ?? '').trim();
+
 	const coordCache = window[NS + '_coords'] || (window[NS + '_coords'] = {});
 
 	function readVillages() {
@@ -69,7 +73,7 @@
 			const el = $(this);
 			const id = Number(el.data('id'));
 			const label = el.find('.quickedit-label').first();
-			const name = String(label.attr('data-text') ?? '').trim();
+			const name = labelName(label);
 			const text = label.text();
 			// współrzędne wioski stoją na końcu etykiety: „Nazwa (380|560) K53”
 			const m = text.match(/\((\d{1,3})\|(\d{1,3})\)\s*K\d+\s*$/) || text.match(/(\d{1,3})\|(\d{1,3})(?!.*\d{1,3}\|\d{1,3})/);
@@ -250,7 +254,7 @@
 		$('.quickedit-vn').each(function () { map.set(Number($(this).data('id')), $(this)); });
 		return map;
 	};
-	const currentName = el => String(el.find('.quickedit-label').first().attr('data-text') ?? '').trim();
+	const currentName = el => labelName(el.find('.quickedit-label').first());
 
 	const pendingRows = plan => {
 		const dom = rowsById();
