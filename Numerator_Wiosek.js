@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.2.1
+ * Numerator Wiosek v1.2.2
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.2.1';
+	const VERSION = 'v1.2.2';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -422,6 +422,12 @@
 		}).join('\n');
 	}
 
+	// pole „Tekst” przyciemnione, gdy wybrany rodzaj nazwy go nie używa (Tylko numer, Własny wzór)
+	function nameFields() {
+		const style = $(`input[name=${NS}_style]:checked`).val();
+		$(`#${NS}_textrow`).css('opacity', style === 'nr' || style === 'custom' ? 0.45 : 1);
+	}
+
 	// ---------- Panel ----------
 	function readPanel() {
 		const s = loadSettings();
@@ -453,12 +459,14 @@
 						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="textnr" ${s.style === 'textnr' ? 'checked' : ''}> <b>Tekst + numer</b></label> – np. Wioska 001, Wioska 002…</div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="nr" ${s.style === 'nr' ? 'checked' : ''}> <b>Tylko numer</b></label> – np. 001, 002…</div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="same" ${s.style === 'same' ? 'checked' : ''}> <b>Ta sama nazwa dla wszystkich</b></label> – bez numerów</div>
-						<div class="nw-opt">Tekst: <input type="text" id="${NS}_text" value="${esc(s.text)}" style="width:150px">
-							&nbsp; cyfr numeru: <input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px"></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="custom" ${s.style === 'custom' ? 'checked' : ''}> <b>Własny wzór</b></label>
 							<input type="text" id="${NS}_pattern" value="${esc(s.pattern)}" style="width:180px">
 							<br><small>w nawiasy { } skrypt wstawia dane wioski: {nr} numer, {K} kontynent, {x} {y} współrzędne<br>
 								np. „{nr} {K}” → 001 K53, „OFF {nr}” → OFF 001, „{nr} ({x}|{y})” → 001 (380|560); nazwa maks. 32 znaki</small></div></td></tr>
+					<tr id="${NS}_textrow"><td>Tekst</td><td><input type="text" id="${NS}_text" value="${esc(s.text)}" style="width:150px">
+						<small>– do „Tekst + numer” i „Ta sama nazwa dla wszystkich”</small></td></tr>
+					<tr><td>Cyfr numeru</td><td><input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px">
+						<small>– 3 → 001, 002…; 2 → 01, 02…; 1 → 1, 2…</small></td></tr>
 					<tr><th colspan="2">Podział na serie</th></tr>
 					<tr><td style="vertical-align:top">Sposób</td><td>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatyczne wyspy</b></label>
@@ -493,7 +501,9 @@
 				<div id="${NS}_plan" style="margin-top:6px"></div>
 			</div>`);
 		$('#' + NS).on('input change', 'input, textarea', () => storageSet('settings', readPanel()));
-		$('#' + NS).on('focus input', `#${NS}_pattern`, () => $(`input[name=${NS}_style][value=custom]`).prop('checked', true));
+		$('#' + NS).on('focus input', `#${NS}_pattern`, () => { $(`input[name=${NS}_style][value=custom]`).prop('checked', true); nameFields(); });
+		$('#' + NS).on('change', `input[name=${NS}_style]`, nameFields);
+		nameFields();
 		$('#' + NS).on('focus input', `#${NS}_point`, () => $(`input[name=${NS}_origin][value=point]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_gap`, () => $(`input[name=${NS}_mode][value=islands]`).prop('checked', true));
 		// edytor stref: każda zmiana w tabeli włącza „Własne strefy”
