@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.4.1
+ * Planer Monet v1.4.2
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.4.1';
+	const VERSION = 'v1.4.2';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -304,7 +304,9 @@
 		if (typeof game_data === 'undefined') { notify(`${NAME}: uruchom skrypt w grze.`); return; }
 		const url = location.href;
 		const onBuildings = game_data.screen === 'overview_villages' && $('#buildings_table').length > 0;
-		if (!onBuildings || !/[?&]page=-1(&|$)/.test(url)) {
+		// zawsze wszystkie wioski: strona „wszystkie” i grupa „wszystkie” (gra pamięta ostatnio wybraną grupę)
+		const allGroup = String(game_data.group_id ?? '0') === '0';
+		if (!onBuildings || !/[?&]page=-1(&|$)/.test(url) || !allGroup) {
 			const t = game_data.player.sitter && Number(game_data.player.sitter) > 0 ? '&t=' + game_data.player.id : '';
 			location.href = `/game.php?village=${game_data.village.id}${t}&screen=overview_villages&mode=buildings&group=0&page=-1`;
 			return;
