@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.1.3
+ * Numerator Wiosek v1.1.4
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.1.3';
+	const VERSION = 'v1.1.4';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -400,7 +400,8 @@
 							&nbsp; cyfr numeru: <input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px"></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="custom" ${s.style === 'custom' ? 'checked' : ''}> <b>Własny wzór</b></label>
 							<input type="text" id="${NS}_pattern" value="${esc(s.pattern)}" style="width:180px">
-							<br><small>{nr} – numer, {K} – kontynent (np. K53), {x} {y} – współrzędne; nazwa maks. 32 znaki</small></div></td></tr>
+							<br><small>w nawiasy { } skrypt wstawia dane wioski: {nr} numer, {K} kontynent, {x} {y} współrzędne<br>
+								np. „{nr} {K}” → 001 K53, „OFF {nr}” → OFF 001, „{nr} ({x}|{y})” → 001 (380|560); nazwa maks. 32 znaki</small></div></td></tr>
 					<tr><th colspan="2">Podział na serie</th></tr>
 					<tr><td style="vertical-align:top">Sposób</td><td>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatyczne wyspy</b></label>
