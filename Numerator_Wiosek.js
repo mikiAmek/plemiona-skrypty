@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.1.1
+ * Numerator Wiosek v1.1.2
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.1.1';
+	const VERSION = 'v1.1.2';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -474,7 +474,7 @@
 
 	// ---------- Start ----------
 	try {
-		if (Date.now() - (window[NS + '_lastRun'] || 0) < 1500) { return; } // gra potrafi wykonać skrót dwa razy
+		if (Date.now() - (window[NS + '_lastRun'] || 0) < 500) { return; } // gra potrafi wykonać skrót dwa razy naraz
 		window[NS + '_lastRun'] = Date.now();
 		if (typeof game_data === 'undefined') { notify(`${NAME}: uruchom skrypt w grze.`); return; }
 
