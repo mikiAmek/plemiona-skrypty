@@ -25,6 +25,8 @@
 	const MAX_BACKUPS = 5;               // tyle ostatnich kopii nazw trzymamy
 
 	const DEFAULTS = {
+		style: 'textnr',     // 'textnr' – tekst + numer; 'nr' – tylko numer; 'same' – ta sama nazwa; 'custom' – własny wzór
+		text: 'Wioska',
 		pattern: 'Wioska {nr}',
 		digits: 3,
 		mode: 'islands',     // 'islands' – automatyczne wyspy; 'rules' – własne strefy
@@ -52,6 +54,7 @@
 		s.digits = Math.min(6, Math.max(1, parseInt(s.digits, 10) || DEFAULTS.digits));
 		s.gap = Math.max(1, Number(s.gap) || DEFAULTS.gap);
 		if (!['islands', 'rules'].includes(s.mode)) { s.mode = DEFAULTS.mode; }
+		if (!['textnr', 'nr', 'same', 'custom'].includes(s.style)) { s.style = DEFAULTS.style; }
 		return s;
 	}
 
@@ -170,7 +173,27 @@
 		return m ? parseInt(m[1], 10) : null;
 	}
 
+	// Wzór nazwy z rodzaju nazwy wybranego w panelu
+	function patternOf(s) {
+		const text = String(s.text || '').trim();
+		if (s.style === 'nr') { return '{nr}'; }
+		if (s.style === 'textnr') { return (text ? text + ' ' : '') + '{nr}'; }
+		if (s.style === 'same') { return text; }
+		return s.pattern;
+	}
+
 	function createPlan(villages, s) {
+		const basePattern = patternOf(s);
+		if (s.style === 'same') {
+			// jedna nazwa dla wszystkich – bez numeracji i podziału na serie
+			if (!basePattern) { throw 'Wpisz nazwę dla wszystkich wiosek.'; }
+			const rows = villages.map(v => {
+				const target = formatName(basePattern, 0, v, s.digits);
+				return { id: v.id, x: v.x, y: v.y, group: 0, nr: null, old: v.name, target, tooLong: target.length > v.maxLen, maxLen: v.maxLen };
+			});
+			return { created: Date.now(), rows, summary: [{ label: `Ta sama nazwa „${basePattern}”`, count: rows.length }], outside: [], warnings: [] };
+		}
+		s = Object.assign({}, s, { pattern: basePattern });
 		if (!/\{nr\}/.test(s.pattern)) { throw 'Wzór nazwy musi zawierać {nr}, np. „Wioska {nr}”.'; }
 		let groups, outside = [];
 		if (s.mode === 'rules') {
@@ -190,7 +213,10 @@
 			if (s.keep) {
 				// zostaw poprawne numery z tej serii (bez duplikatów)
 				ordered.forEach(v => {
-					const nr = numberFromName(pattern, v.name, v);
+					// numer z nazwy pasującej do wzoru, a gdy zmieniasz format nazwy – numer z końca starej nazwy
+					// (np. „Wioska 024” → „024”), żeby numery się nie przesunęły
+					let nr = numberFromName(pattern, v.name, v);
+					if (nr === null) { const m = v.name.match(/(\d+)\s*$/); nr = m ? parseInt(m[1], 10) : null; }
 					if (nr !== null && nr >= g.start && nr < nextStart && !taken.has(nr)) { taken.add(nr); assigned.set(v.id, nr); }
 				});
 			}
@@ -296,6 +322,8 @@
 	// ---------- Panel ----------
 	function readPanel() {
 		const s = loadSettings();
+		s.style = $(`input[name=${NS}_style]:checked`).val() || DEFAULTS.style;
+		s.text = String($(`#${NS}_text`).val() ?? s.text).trim();
 		s.pattern = String($(`#${NS}_pattern`).val() ?? s.pattern).trim() || DEFAULTS.pattern;
 		s.digits = Math.min(6, Math.max(1, parseInt($(`#${NS}_digits`).val(), 10) || DEFAULTS.digits));
 		s.mode = $(`input[name=${NS}_mode]:checked`).val() || 'islands';
@@ -316,10 +344,15 @@
 				<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
 				<table class="vis" style="width:100%">
 					<tr><th colspan="2">Nazwy</th></tr>
-					<tr><td style="width:120px">Wzór nazwy</td><td>
-						<input type="text" id="${NS}_pattern" value="${esc(s.pattern)}" style="width:180px"> cyfr numeru:
-						<input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px">
-						<br><small>{nr} – numer, {K} – kontynent (np. K53), {x} {y} – współrzędne; maks. 32 znaki</small></td></tr>
+					<tr><td style="width:120px;vertical-align:top">Rodzaj nazwy</td><td>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="textnr" ${s.style === 'textnr' ? 'checked' : ''}> <b>Tekst + numer</b></label> – np. Wioska 001, Wioska 002…</div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="nr" ${s.style === 'nr' ? 'checked' : ''}> <b>Tylko numer</b></label> – np. 001, 002…</div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="same" ${s.style === 'same' ? 'checked' : ''}> <b>Ta sama nazwa dla wszystkich</b></label> – bez numerów</div>
+						<div class="nw-opt">Tekst: <input type="text" id="${NS}_text" value="${esc(s.text)}" style="width:150px">
+							&nbsp; cyfr numeru: <input type="text" id="${NS}_digits" value="${s.digits}" style="width:30px"></div>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_style" value="custom" ${s.style === 'custom' ? 'checked' : ''}> <b>Własny wzór</b></label>
+							<input type="text" id="${NS}_pattern" value="${esc(s.pattern)}" style="width:180px">
+							<br><small>{nr} – numer, {K} – kontynent (np. K53), {x} {y} – współrzędne; nazwa maks. 32 znaki</small></div></td></tr>
 					<tr><th colspan="2">Podział na serie</th></tr>
 					<tr><td style="vertical-align:top">Sposób</td><td>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="islands" ${s.mode === 'islands' ? 'checked' : ''}> <b>Automatyczne wyspy</b></label>
@@ -345,6 +378,7 @@
 				<div id="${NS}_plan" style="margin-top:6px"></div>
 			</div>`);
 		$('#' + NS).on('input change', 'input, textarea', () => storageSet('settings', readPanel()));
+		$('#' + NS).on('focus input', `#${NS}_pattern`, () => $(`input[name=${NS}_style][value=custom]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_gap`, () => $(`input[name=${NS}_mode][value=islands]`).prop('checked', true));
 		$('#' + NS).on('focus input', `#${NS}_rules`, () => $(`input[name=${NS}_mode][value=rules]`).prop('checked', true));
 		$('#' + NS).on('click', `#${NS}_preview`, () => {
