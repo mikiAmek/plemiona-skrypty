@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.0.0
+ * Numerator Wiosek v1.0.1
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.0.0';
+	const VERSION = 'v1.0.1';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -235,6 +235,8 @@
 				rows.push({ id: v.id, x: v.x, y: v.y, group: gi, nr: n, old: v.name, target, tooLong: target.length > v.maxLen, maxLen: v.maxLen });
 			});
 		});
+		// tabela i kolejność zmian: seria po serii, numer po numerze
+		rows.sort((a, b) => a.group - b.group || a.nr - b.nr);
 		const summary = groups.map((g, gi) => {
 			const nrs = rows.filter(r => r.group === gi).map(r => r.nr);
 			return { label: g.label, count: g.members.length, from: Math.min(...nrs), to: Math.max(...nrs), center: g.center };
