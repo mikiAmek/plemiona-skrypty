@@ -77,7 +77,7 @@
 			const text = label.text();
 			// współrzędne wioski stoją na końcu etykiety: „Nazwa (380|560) K53”
 			const m = text.match(/\((\d{1,3})\|(\d{1,3})\)\s*K\d+\s*$/) || text.match(/(\d{1,3})\|(\d{1,3})(?!.*\d{1,3}\|\d{1,3})/);
-			if (id && m) { coordCache[id] = { x: Number(m[1]), y: Number(m[2]) }; }
+			if (id && m && !coordCache[id]) { coordCache[id] = { x: Number(m[1]), y: Number(m[2]) }; } // współrzędne wioski się nie zmieniają
 			const c = coordCache[id];
 			if (!id || !c) { return; }
 			list.push({ id, name, x: c.x, y: c.y, maxLen: Number(el.data('length')) || 32 });
