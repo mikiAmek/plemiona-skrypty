@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.3.3
+ * Numerator Wiosek v1.3.4
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -19,7 +19,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.3.3';
+	const VERSION = 'v1.3.4';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -33,21 +33,22 @@
 		digits: 3,
 		mode: 'islands',     // 'all' – bez podziału; 'islands' – automatycznie według skupisk; 'rules' – własne strefy
 		gap: 10,             // wyspy: maks. odległość między sąsiednimi wioskami (pola)
-		rules: 'K63 => 101\n* => 1',
+		rules: '* => 1',
 		keep: true,          // true – zostaw istniejące numery; false – przenumeruj od nowa
 		origin: 'center',    // kolejność numerów: 'center' – od środka serii; 'point' – od wskazanych współrzędnych
 		point: ''            // np. '380|560'
 	};
 
 	// ---------- Narzędzia ----------
+	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 	const notify = (msg, type = 'InfoMessage') => {
-		if (typeof UI !== 'undefined' && UI[type]) { UI[type](msg); } else { alert(msg); }
+		// komunikaty gry wyświetlają HTML, a w treści bywają nazwy wiosek – wstawiamy je jako zwykły tekst
+		if (typeof UI !== 'undefined' && UI[type]) { UI[type](esc(msg)); } else { alert(msg); }
 	};
 	const storageKey = key => `${NS}_${game_data.player.id}_${key}`;
 	const storageGet = key => { try { return JSON.parse(localStorage.getItem(storageKey(key))); } catch (e) { return null; } };
 	const storageSet = (key, val) => { try { localStorage.setItem(storageKey(key), JSON.stringify(val)); } catch (e) { /* brak miejsca */ } };
 	const storageRemove = key => { try { localStorage.removeItem(storageKey(key)); } catch (e) { /* nic */ } };
-	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 	const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 	const continentOf = v => Math.floor(v.y / 100) * 10 + Math.floor(v.x / 100);
@@ -220,6 +221,7 @@
 	}
 
 	function createPlan(villages, s) {
+		if (!villages.length) { throw 'nie znalazłem wiosek na liście – odśwież stronę.'; }
 		const basePattern = patternOf(s);
 		if (s.style === 'same') {
 			// jedna nazwa dla wszystkich – bez numeracji i podziału na serie
@@ -254,7 +256,7 @@
 		groups.forEach((g, gi) => {
 			if (origin) { g.center = origin; } // numery po kolei od wskazanego punktu
 			const pattern = g.pattern || s.pattern;
-			if (!/\{nr\}/.test(pattern)) { throw `${g.label}: wzór „${pattern}” musi zawierać {nr}.`; }
+			if (!/\{nr\}/.test(pattern)) { throw `${g.label}: „Inna nazwa w tej strefie” musi zawierać {nr}, np. „OFF {nr}”.`; }
 			const ordered = g.members.slice().sort((a, b) => dist(a, g.center) - dist(b, g.center) || a.id - b.id);
 			// zakres serii: do początku następnej serii, a dla ostatniej – setka (albo więcej, gdy wiosek jest ponad 99)
 			const width = Math.max(100, Math.ceil(g.members.length / 100) * 100);
@@ -286,7 +288,12 @@
 				rows.push({ id: v.id, x: v.x, y: v.y, group: gi, nr: n, old: v.name, target, tooLong: target.length > v.maxLen, maxLen: v.maxLen });
 			});
 		});
-		// tabela i kolejność zmian: seria po serii, numer po numerze
+		// ta sama nazwa dla dwóch wiosek – zwykle dwie strefy zaczynają od tego samego numeru
+		const seen = new Map();
+		rows.forEach(r => seen.set(r.target, (seen.get(r.target) || 0) + 1));
+		const dup = [...seen.entries()].filter(([, c]) => c > 1);
+		if (dup.length) { warnings.push(`${dup.length} nazw się powtarza (np. „${dup[0][0]}”) – ustaw strefom różne numery początkowe albo różne nazwy.`); }
+		// tabela i kolejność zmian: grupa po grupie, numer po numerze
 		rows.sort((a, b) => a.group - b.group || a.nr - b.nr);
 		const summary = groups.map((g, gi) => {
 			const nrs = rows.filter(r => r.group === gi).map(r => r.nr);
@@ -459,6 +466,7 @@
 		$($('#content_value').length ? '#content_value' : '#mobileContent').first().prepend(`
 			<div id="${NS}" class="vis" style="padding:8px;margin-bottom:10px">
 				<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
+				<p style="margin:0 0 6px 0"><small>Wiosek na liście: <b>${readVillages().length}</b>. Skrypt numeruje tylko wioski z grupy wybranej w grze – żeby objąć wszystkie, wybierz grupę „wszystkie”.</small></p>
 				<table class="vis" style="width:100%">
 					<tr><th colspan="2">Nazwy</th></tr>
 					<tr><td style="width:120px;vertical-align:top">Rodzaj nazwy</td><td>
