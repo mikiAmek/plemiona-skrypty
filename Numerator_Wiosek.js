@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.2.0
+ * Numerator Wiosek v1.2.1
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -18,7 +18,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.2.0';
+	const VERSION = 'v1.2.1';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -400,7 +400,7 @@
 			<td><select class="nw-type">${opt('K', 'Kontynent')}${opt('R', 'Odległość od punktu')}${opt('P', 'Prostokąt')}${opt('*', 'Wszystkie pozostałe')}</select></td>
 			<td style="white-space:nowrap">${where}</td>
 			<td>${inp('nw-start', z.start, 45, '1')}</td>
-			<td>${inp('nw-pat', z.pattern, 120, 'jak wyżej')}</td>
+			<td title="Puste = nazwa z „Rodzaj nazwy” wyżej. Wpisz np. OFF {nr}, żeby wioski z tej strefy miały inną nazwę.">${inp('nw-pat', z.pattern, 95, 'np. OFF {nr}')}</td>
 			<td style="white-space:nowrap"><a href="#" class="nw-up" title="wyżej">▲</a> <a href="#" class="nw-down" title="niżej">▼</a> <a href="#" class="nw-del" title="usuń">✕</a></td></tr>`;
 	}
 
@@ -466,10 +466,10 @@
 							<br><small>największa wyspa dostaje serię 001…, następna 101…, kolejna 201…; wyspa z nadanymi już numerami zostaje przy swojej serii</small></div>
 						<div class="nw-opt"><label><input type="radio" name="${NS}_mode" value="rules" ${s.mode === 'rules' ? 'checked' : ''}> <b>Własne strefy</b></label>
 							<small>– wioska trafia do pierwszej pasującej strefy (od góry); „Wszystkie pozostałe” zostaw na końcu</small>
-							<table class="vis" id="${NS}_zones" style="width:100%;margin-top:3px">
-								<tr><th>#</th><th>Obszar</th><th>Gdzie</th><th>Od numeru</th><th>Własny wzór <small>(opcjonalnie)</small></th><th></th></tr>
+							<div style="overflow-x:auto"><table class="vis" id="${NS}_zones" style="width:100%;margin-top:3px">
+								<tr><th>#</th><th>Obszar</th><th>Gdzie</th><th>Od numeru</th><th>Inna nazwa w tej strefie <small>(opcjonalnie)</small></th><th></th></tr>
 								${rulesToZones(s.rules).map(zoneRowHtml).join('')}
-							</table>
+							</table></div>
 							<a href="#" id="${NS}_addzone">+ dodaj strefę</a></div>
 					</td></tr>
 					<tr><td style="vertical-align:top">Kolejność</td><td>
