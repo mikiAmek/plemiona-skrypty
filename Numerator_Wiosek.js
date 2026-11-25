@@ -1,5 +1,5 @@
 /*
- * Numerator Wiosek v1.3.2
+ * Numerator Wiosek v1.3.3
  * Autor: Mavionis
  *
  * Przegląd wiosek: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Produkcja ze wszystkimi wioskami.)
@@ -19,7 +19,7 @@
 	'use strict';
 
 	const NAME = 'Numerator Wiosek';
-	const VERSION = 'v1.3.2';
+	const VERSION = 'v1.3.3';
 	const NS = 'NumeratorWiosek';
 	const PLAN_TTL = 60 * 60 * 1000;     // plan starszy niż godzina trzeba przeliczyć
 	const SAVE_TIMEOUT = 5000;           // ms na potwierdzenie zmiany nazwy przez grę
@@ -493,11 +493,11 @@
 							<input type="text" id="${NS}_point" value="${esc(s.point || (game_data.village.x + '|' + game_data.village.y))}" style="width:70px">
 							<small>– najbliższa wioska dostaje pierwszy numer w grupie, dalej coraz dalsze</small></div>
 					</td></tr>
-					<tr><th colspan="2">Numery</th></tr>
-					<tr><td style="vertical-align:top">Istniejące numery</td><td>
-						<div class="nw-opt"><label><input type="radio" name="${NS}_keep" value="keep" ${s.keep ? 'checked' : ''}> <b>Zostaw ich numery</b></label>
+					<tr><th colspan="2">Obecne nazwy wiosek</th></tr>
+					<tr><td colspan="2">
+						<div class="nw-opt"><label><input type="radio" name="${NS}_keep" value="keep" ${s.keep ? 'checked' : ''}> <b>Zostaw obecne numery</b></label>
 							<br><small>zmieniają się tylko nowe wioski i te bez numeru – dostają pierwszy wolny numer w swojej grupie (nie zawsze zgodny z kolejnością)</small></div>
-						<div class="nw-opt"><label><input type="radio" name="${NS}_keep" value="renumber" ${s.keep ? '' : 'checked'}> <b>Przenumeruj wszystko od nowa</b></label>
+						<div class="nw-opt"><label><input type="radio" name="${NS}_keep" value="renumber" ${s.keep ? '' : 'checked'}> <b>Zmień wszystko od nowa</b></label>
 							<br><small>numery ściśle według kolejności wyżej – nowa wioska wchodzi na swoje miejsce, a dalsze przesuwają się o jeden</small>
 							<div id="${NS}_keepwarn" class="nw-warn" style="display:none;color:#b00;font-weight:bold">⚠ To może zmienić nazwy wielu wiosek. Sprawdź w Podglądzie, ile jest „Do zmiany”.</div></div>
 					</td></tr>
