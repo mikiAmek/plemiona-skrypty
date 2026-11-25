@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.5.1
+ * Planer Monet v1.5.2
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.5.1';
+	const VERSION = 'v1.5.2';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -66,21 +66,25 @@
 	}
 
 	// ---------- Wioski z Przeglądu > Budynki ----------
+	// Widok zwykły: wiersz tr#v_ID z komórkami td.b_main, td.b_snob…, kolejka w ul#building_order_ID.
+	// Widok mobilny: wszystkie wioski w jednej tabeli, poziomy w td.building_main.village_ID…, kolejka w ul.orders_ID.
 	function readVillages() {
+		const table = $('#buildings_table');
 		const list = [];
-		$('#buildings_table tr.vrow, #buildings_table tr[id^="v_"]').each(function () {
-			const tr = $(this);
-			const label = tr.find('.quickedit-label').first();
+		table.find('.quickedit-vn').each(function () {
+			const qe = $(this);
+			const id = Number(qe.data('id'));
+			const label = qe.find('.quickedit-label').first();
 			const name = String(label.data('text') ?? label.attr('data-text') ?? '').trim();
 			const m = label.text().match(/\((\d{1,3})\|(\d{1,3})\)\s*K\d+\s*$/);
-			if (!m) { return; }
-			const lvl = b => parseInt(tr.find('td.b_' + b).first().text(), 10) || 0;
-			const queuedPalace = tr.find('.queue_icon img[src*="buildings/snob."]').length > 0;
+			if (!id || !m) { return; }
+			const row = table.find('tr#v_' + id);
+			const lvl = b => parseInt((row.length ? row.find('td.b_' + b) : table.find(`td.building_${b}.village_${id}`)).first().text(), 10) || 0;
+			const queue = $(`#building_order_${id}, ul.orders_${id}`);
 			list.push({
-				id: Number(String(tr.attr('id') || '').replace('v_', '')), name,
-				x: Number(m[1]), y: Number(m[2]),
+				id, name, x: Number(m[1]), y: Number(m[2]),
 				main: lvl('main'), smith: lvl('smith'), market: lvl('market'), storage: lvl('storage'),
-				palace: lvl('snob') > 0, queuedPalace
+				palace: lvl('snob') > 0, queuedPalace: queue.find('img[src*="buildings/snob."]').length > 0
 			});
 		});
 		return list;
@@ -302,7 +306,7 @@
 			return;
 		}
 		if (!$('#buildings_table').length) {
-			notify(`${NAME}: nie widzę tabeli budynków – otwórz Przegląd > Budynki w zwykłym widoku gry (nie mobilnym) i uruchom skrypt ponownie.`, 'ErrorMessage');
+			notify(`${NAME}: nie widzę tabeli budynków – odśwież stronę i uruchom skrypt ponownie.`, 'ErrorMessage');
 			return;
 		}
 		const villages = readVillages();
