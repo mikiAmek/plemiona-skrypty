@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.3
+ * Równe Zbieractwo v2.6.4
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.3';
+	const VERSION = 'v2.6.4';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -51,8 +51,8 @@
 		levels: [true, true, true, true],
 		mode: 'best',      // 'best' – Optymalnie (najwięcej łupu na godzinę); 'time' – Wróć po; 'fill' – Uzupełnij
 		hours: 95 / 60,    // Wróć po: 1:35
-		rangeMin: 1,       // Optymalnie: zakres czasu powrotu w godzinach, 0 = bez ograniczenia
-		rangeMax: 3,
+		rangeMin: 0,       // Optymalnie: zakres czasu powrotu w godzinach, 0 = bez ograniczenia
+		rangeMax: 0,
 		tolMin: 3          // uzupełnianie: o ile minut później niż już wysłane może wrócić nowy oddział
 	};
 
@@ -96,6 +96,7 @@
 		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours >= 5 / 60) { s.hours = saved.hours; } // krótsze = pozostałość starego formatu
 		for (const k of ['rangeMin', 'rangeMax']) { if (Number.isFinite(saved[k]) && saved[k] >= 0) { s[k] = saved[k]; } }
+		if (s.rangeMin === 1 && s.rangeMax === 3) { s.rangeMin = 0; s.rangeMax = 0; } // dawny domyślny zakres 1:00–3:00 → bez ograniczenia
 		if (Number.isFinite(saved.tolMin) && saved.tolMin >= 0) { s.tolMin = saved.tolMin; }
 		return s;
 	}
@@ -254,7 +255,12 @@
 					});
 					const consider = (sc, tps) => {
 						if (!tps.every(tp => popOf(tp.units, units) >= MIN_POP)) { tooSmall = true; return; }
-						const r = simulate(tps, units);
+						// kolejność wypełniania ma znaczenie dla słabszych wiosek (gra zaznacza wioskę na pierwszym poziomie,
+						// na który ją stać) – sprawdzamy 1→4 i 4→1 i zostawiamy lepszą
+						const rev = tps.slice().reverse();
+						const a = simulate(tps, units), b = tps.length > 1 ? simulate(rev, units) : null;
+						if (b && b.loot > a.loot) { tps = rev; }
+						const r = b && b.loot > a.loot ? b : a;
 						if (!r.loot) { tooBig = true; return; }
 						const perHour = r.loot / (r.seconds / 3600);
 						if (!targetSec && range && (r.seconds < range[0] || r.seconds > range[1])) { return; }
