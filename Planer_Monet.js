@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.4.0
+ * Planer Monet v1.4.1
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.4.0';
+	const VERSION = 'v1.4.1';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -204,7 +204,7 @@
 				<table class="vis" style="width:100%">
 					<tr><th colspan="2">Ustawienia</th></tr>
 					<tr><td style="width:210px">Pomiń wioski</td><td><input type="text" id="${NS}_skip" value="${esc(s.skip)}" style="width:220px" placeholder="np. 101-106">
-						<small>– opcjonalnie; nie biorą udziału; numery, zakresy albo nazwy po przecinku</small></td></tr>
+						<small>– opcjonalnie; te wioski nie biorą udziału. Wpisz numery z końca nazwy po przecinku: „7, 12” albo od–do: „101-106” (= wioski 101, 102 … 106)</small></td></tr>
 					<tr><td style="vertical-align:top">Jak bijesz monety</td><td>
 						<label><input type="radio" name="${NS}_pace" value="fast" ${s.pace === 'fast' ? 'checked' : ''}> <b>intensywnie</b></label> <small>– pakiet za pakietem; liczy się czas powrotu kupców, więc krótsze trasy i więcej Pałaców</small><br>
 						<label><input type="radio" name="${NS}_pace" value="calm" ${s.pace === 'calm' ? 'checked' : ''}> <b>spokojnie</b></label> <small>– pakiety od czasu do czasu; trasa nie gra roli, więc jak najmniej Pałaców i najlepsze flagi w kilku dużych grupach</small></td></tr>
