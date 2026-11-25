@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.4
+ * Równe Zbieractwo v2.6.6
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.4';
+	const VERSION = 'v2.6.6';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -51,8 +51,9 @@
 		levels: [true, true, true, true],
 		mode: 'best',      // 'best' – Optymalnie (najwięcej łupu na godzinę); 'time' – Wróć po; 'fill' – Uzupełnij
 		hours: 95 / 60,    // Wróć po: 1:35
-		rangeMin: 0,       // Optymalnie: zakres czasu powrotu w godzinach, 0 = bez ograniczenia
-		rangeMax: 0,
+		rangeOn: false,    // Optymalnie: false = bez ograniczeń, true = w zakresie od–do
+		rangeMin: 1,       // zakres czasu powrotu w godzinach (0 = bez ograniczenia z tej strony)
+		rangeMax: 3,
 		tolMin: 3          // uzupełnianie: o ile minut później niż już wysłane może wrócić nowy oddział
 	};
 
@@ -96,7 +97,7 @@
 		if (['time', 'best', 'fill'].includes(saved.mode)) { s.mode = saved.mode; }
 		if (Number.isFinite(saved.hours) && saved.hours >= 5 / 60) { s.hours = saved.hours; } // krótsze = pozostałość starego formatu
 		for (const k of ['rangeMin', 'rangeMax']) { if (Number.isFinite(saved[k]) && saved[k] >= 0) { s[k] = saved[k]; } }
-		if (s.rangeMin === 1 && s.rangeMax === 3) { s.rangeMin = 0; s.rangeMax = 0; } // dawny domyślny zakres 1:00–3:00 → bez ograniczenia
+		if (typeof saved.rangeOn === 'boolean') { s.rangeOn = saved.rangeOn; }
 		if (Number.isFinite(saved.tolMin) && saved.tolMin >= 0) { s.tolMin = saved.tolMin; }
 		return s;
 	}
@@ -242,7 +243,8 @@
 			const poolMixes = mixesFor(pool);
 			const poolLevels = levels.filter(id => pool.some(x => x.free.includes(id)));
 			for (let mask = 1; mask < (1 << poolLevels.length); mask++) {
-				const lv = poolLevels.filter((_, i) => mask & (1 << i));
+				// poziomy zawsze wypełniane od 4 do 1
+				const lv = poolLevels.filter((_, i) => mask & (1 << i)).reverse();
 				const invSum = lv.reduce((t, id) => t + 1 / data.options[id].loot_factor, 0);
 				const share = id => (1 / data.options[id].loot_factor) / invSum;
 				for (const m of poolMixes) {
@@ -255,12 +257,7 @@
 					});
 					const consider = (sc, tps) => {
 						if (!tps.every(tp => popOf(tp.units, units) >= MIN_POP)) { tooSmall = true; return; }
-						// kolejność wypełniania ma znaczenie dla słabszych wiosek (gra zaznacza wioskę na pierwszym poziomie,
-						// na który ją stać) – sprawdzamy 1→4 i 4→1 i zostawiamy lepszą
-						const rev = tps.slice().reverse();
-						const a = simulate(tps, units), b = tps.length > 1 ? simulate(rev, units) : null;
-						if (b && b.loot > a.loot) { tps = rev; }
-						const r = b && b.loot > a.loot ? b : a;
+						const r = simulate(tps, units);
 						if (!r.loot) { tooBig = true; return; }
 						const perHour = r.loot / (r.seconds / 3600);
 						if (!targetSec && range && (r.seconds < range[0] || r.seconds > range[1])) { return; }
@@ -326,7 +323,7 @@
 						: 'Przy tym czasie nie da się złożyć oddziału min. 10 populacji – wydłuż czas.';
 			}
 		} else {
-			const lo = settings.rangeMin, hi = settings.rangeMax;
+			const lo = settings.rangeOn ? settings.rangeMin : 0, hi = settings.rangeOn ? settings.rangeMax : 0;
 			if (Number.isNaN(lo) || Number.isNaN(hi)) { throw 'Nieprawidłowy zakres czasu – wpisz w formacie g:mm, np. 1:00 i 2:30 (puste pole = bez ograniczenia).'; }
 			if (lo && hi && lo > hi) { throw 'Zakres czasu: „od” jest większe niż „do”.'; }
 			const range = lo || hi ? [lo ? lo * 3600 : 0, hi ? hi * 3600 : Infinity] : null;
@@ -475,6 +472,7 @@
 		s.hours = hours > 0 ? hours : DEFAULTS.hours;
 		s.hoursValid = hours > 0;
 		// zakres czasu powrotu w trybie Optymalnie (puste pole = bez ograniczenia)
+		s.rangeOn = $(`input[name=${NS}_range]:checked`).val() === 'on';
 		s.rangeMin = parseHours($(`#${NS}_rmin`).val());
 		s.rangeMax = parseHours($(`#${NS}_rmax`).val());
 		const tol = Number(String($(`#${NS}_tol`).val() ?? '').replace(',', '.'));
@@ -505,8 +503,12 @@
 				<tr><td style="vertical-align:top">Tryb</td><td colspan="2">
 					<div style="margin:2px 0 8px 0">
 						<label><input type="radio" name="${NS}_mode" value="best" ${settings.mode === 'best' ? 'checked' : ''}> <b>Optymalnie</b></label>
-						<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:45px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:45px">
-						<br><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę) w zakresie od–do; puste pole = bez ograniczenia</small>
+						<br><small>skrypt sam dobiera zestaw i czas powrotu (najwięcej surowców na godzinę)</small>
+						<div style="margin:3px 0 0 22px">
+							<label><input type="radio" name="${NS}_range" value="off" ${settings.rangeOn ? '' : 'checked'}> bez ograniczeń</label><br>
+							<label><input type="radio" name="${NS}_range" value="on" ${settings.rangeOn ? 'checked' : ''}> w zakresie</label>
+							<input type="text" id="${NS}_rmin" value="${settings.rangeMin ? fmtHours(settings.rangeMin) : ''}" placeholder="g:mm" style="width:45px">–<input type="text" id="${NS}_rmax" value="${settings.rangeMax ? fmtHours(settings.rangeMax) : ''}" placeholder="g:mm" style="width:45px">
+						</div>
 					</div>
 					<div style="margin:0 0 8px 0">
 						<label><input type="radio" name="${NS}_mode" value="time" ${settings.mode === 'time' ? 'checked' : ''}> <b>Wróć po</b></label>
@@ -533,6 +535,11 @@
 				'Wpisz „Zostaw w wiosce” albo wybierz grupę bez atakowanych wiosek.'
 				: '');
 		};
+		// wpisanie zakresu albo wybór „bez ograniczeń / w zakresie” od razu włącza tryb Optymalnie
+		$('#' + NS).on('focus input', `#${NS}_rmin, #${NS}_rmax`, () => { $(`input[name=${NS}_range][value=on]`).prop('checked', true); $(`input[name=${NS}_mode][value=best]`).prop('checked', true); });
+		$('#' + NS).on('change', `input[name=${NS}_range]`, () => { $(`input[name=${NS}_mode][value=best]`).prop('checked', true); });
+		$('#' + NS).on('focus input', `#${NS}_hours`, () => { $(`input[name=${NS}_mode][value=time]`).prop('checked', true); });
+		$('#' + NS).on('focus input', `#${NS}_tol`, () => { $(`input[name=${NS}_mode][value=fill]`).prop('checked', true); });
 		$('#' + NS).on('input change', 'input', update);
 		update();
 	}
