@@ -1,5 +1,5 @@
 /*
- * Równe Zbieractwo v2.6.6
+ * Równe Zbieractwo v2.6.7
  * Autor: Mavionis
  *
  * Plac > Zbieractwo masowe: uruchom skrypt. Pojawi się panel z ustawieniami.
@@ -32,7 +32,7 @@
 	}
 
 	const NAME = 'Równe Zbieractwo';
-	const VERSION = 'v2.6.6';
+	const VERSION = 'v2.6.7';
 	const NS = 'RowneZbieractwo';
 	const FILL_MARGIN = 60;             // s zapasu przy uzupełnianiu (czas od wypełnienia do kliknięcia „Wyślij”)
 	const serverNow = () => Math.floor((typeof Timing !== 'undefined' && Timing.getCurrentServerTime ? Timing.getCurrentServerTime() : Date.now()) / 1000);
@@ -489,6 +489,12 @@
 		const levelBoxes = [1, 2, 3, 4].map(i =>
 			`<label style="display:inline-block;white-space:nowrap;margin-right:14px"><input type="checkbox" id="${NS}_level_${i}" ${settings.levels[i - 1] ? 'checked' : ''}> ${i}</label>`).join('');
 
+		// gra ustawia etykietom display:block – w panelu mają być w jednej linii z polem
+		if (!$('#' + NS + '_style').length) {
+			$('head').append(`<style id="${NS}_style">#${NS} label{display:inline;margin:0;white-space:nowrap}
+				#${NS} input[type=radio],#${NS} input[type=checkbox]{vertical-align:middle;margin:0 3px 0 0}
+				#${NS} input[type=text]{vertical-align:middle}</style>`);
+		}
 		$('#content_value').prepend(`
 		<div id="${NS}" class="vis vis_item" style="margin-bottom:10px;padding:8px">
 			<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small></h3>
