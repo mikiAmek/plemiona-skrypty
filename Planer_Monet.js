@@ -1,11 +1,14 @@
 /*
- * Planer Monet v1.0.0
+ * Planer Monet v1.1.0
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
  *
  * Pomaga w biciu złotych monet:
- *  - przypisuje każdą wioskę bez Pałacu do najbliższej wioski z Pałacem i pokazuje najdłuższą trasę kupców,
+ *  - sam wybiera, w których Pałacach bić monety: jak najmniej Pałaców (mniej flag do pilnowania, większe grupy),
+ *    tak, żeby najdłuższa trasa kupców nie przekroczyła ustawionej (domyślnie 4,5 pola); reszta wysyła do najbliższego.
+ *    Działa też, gdy Pałac jest prawie wszędzie,
+ *  - pomija wioski leżące daleko od wszystkich Pałaców (np. osobna wyspa),
  *  - układa wioski z Pałacem w ranking: gdzie założyć najlepszą flagę „Obniżenie kosztu monet” i gdzie Bonus flagi,
  *  - wskazuje, gdzie zbudować nowy Pałac, żeby najbardziej skrócić trasy (z wymaganiami: Ratusz 20, Kuźnia 20, Rynek 10).
  * Skrypt tylko czyta stronę i liczy – niczego nie buduje, nie wysyła i nie zmienia w grze.
@@ -14,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.0.0';
+	const VERSION = 'v1.1.0';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -22,7 +25,7 @@
 	const PALACE_REQ = { main: 20, smith: 20, market: 10 };
 	const REQ_NAMES = { main: 'Ratusz', smith: 'Kuźnia', market: 'Rynek' };
 
-	const DEFAULTS = { skip: '', noMint: '', useQueued: true, bonusMin: 6 };
+	const DEFAULTS = { skip: '', useQueued: true, bonusMin: 6, maxRoute: 4.5, far: 10 };
 
 	// ---------- Narzędzia ----------
 	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -41,6 +44,8 @@
 	function loadSettings() {
 		const s = Object.assign({}, DEFAULTS, storageGet('settings') || {});
 		s.bonusMin = Math.max(1, parseInt(s.bonusMin, 10) || DEFAULTS.bonusMin);
+		s.maxRoute = Math.max(1, Number(String(s.maxRoute).replace(',', '.')) || DEFAULTS.maxRoute);
+		s.far = Math.max(1, Number(String(s.far).replace(',', '.')) || DEFAULTS.far);
 		return s;
 	}
 
@@ -107,11 +112,49 @@
 	}
 
 	function analyse(villages, s) {
-		const skip = nameMatcher(s.skip), noMint = nameMatcher(s.noMint);
-		const active = villages.filter(v => !skip(v));
+		const skip = nameMatcher(s.skip);
 		const isPalace = v => v.palace || (s.useQueued && v.queuedPalace);
-		const palaces = active.filter(v => isPalace(v) && !noMint(v));
-		if (!palaces.length) { throw 'nie ma żadnej wioski z Pałacem, która bije monety.'; }
+		const allPalaces = villages.filter(v => isPalace(v) && !skip(v));
+		if (!allPalaces.length) { throw 'nie ma żadnej wioski z Pałacem.'; }
+		// wioski dalej niż „far” pól od każdego Pałacu nie biorą udziału (np. osobna wyspa)
+		const tooFar = villages.filter(v => !skip(v) && !isPalace(v) && Math.min(...allPalaces.map(p => dist(v, p))) > s.far);
+		const active = villages.filter(v => !skip(v) && !tooFar.includes(v));
+		// Bicie we wszystkich Pałacach daje najkrótsze trasy, ale wymaga flagi i pilnowania w każdym z nich.
+		// Zdejmujemy po kolei Pałace, bez których najdłuższa trasa rośnie najmniej – dopóki mieści się w limicie
+		// (a gdy nawet przy wszystkich Pałacach jest dłuższa – w tej najkrótszej możliwej). Zdjęty Pałac wysyła surowce.
+		const best = assign(active, allPalaces);
+		const limit = Math.max(best.longest ? best.longest.d : 0, s.maxRoute) + 1e-9;
+		let palaces = allPalaces.slice();
+		for (;;) {
+			let pick = null;
+			palaces.forEach(p => {
+				if (palaces.length < 2) { return; }
+				const r = assign(active, palaces.filter(q => q !== p));
+				if (!r.longest || r.longest.d > limit) { return; }
+				if (!pick || r.longest.d < pick.r.longest.d - 1e-9 || (Math.abs(r.longest.d - pick.r.longest.d) < 1e-9 && r.avg < pick.r.avg)) { pick = { p, r }; }
+			});
+			if (!pick) { break; }
+			palaces = palaces.filter(q => q !== pick.p);
+		}
+		// drugi sposób: po kolei Pałac, który w limicie obejmie najwięcej jeszcze nieobjętych wiosek
+		const cover = [];
+		let left = active.slice();
+		while (left.length) {
+			let pick = null, got = [];
+			allPalaces.forEach(p => {
+				if (cover.includes(p)) { return; }
+				const inRange = left.filter(v => dist(v, p) <= limit);
+				if (inRange.length > got.length) { pick = p; got = inRange; }
+			});
+			if (!pick) { break; }
+			cover.push(pick);
+			left = left.filter(v => !got.includes(v));
+		}
+		if (!left.length && cover.length < palaces.length) {
+			const r = assign(active, cover);
+			if (r.longest && r.longest.d <= limit) { palaces = cover; }
+		}
+		const resting = allPalaces.filter(p => !palaces.includes(p));
 		const now = assign(active, palaces);
 		// ranking: najwięcej surowców na falę → najlepsza flaga
 		const ranking = now.groups.map(g => {
@@ -126,7 +169,7 @@
 			return { c, after, takes: g.senders.length, missing };
 		}).sort((a, b) => a.after.longest.d - b.after.longest.d || a.after.avg - b.after.avg || b.takes - a.takes)
 			.slice(0, 5);
-		return { active, skipped: villages.length - active.length, palaces, now, ranking, candidates };
+		return { active, skipped: villages.length - active.length - tooFar.length, tooFar, palaces, resting, best, now, ranking, candidates };
 	}
 
 	// ---------- Panel ----------
@@ -142,9 +185,10 @@
 				<table class="vis" style="width:100%">
 					<tr><th colspan="2">Ustawienia</th></tr>
 					<tr><td style="width:210px">Pomiń wioski</td><td><input type="text" id="${NS}_skip" value="${esc(s.skip)}" style="width:220px" placeholder="np. 101-106">
-						<small>– nie biją i nie wysyłają; numery, zakresy albo nazwy po przecinku</small></td></tr>
-					<tr><td>Pałace, które nie biją monet</td><td><input type="text" id="${NS}_nomint" value="${esc(s.noMint)}" style="width:220px" placeholder="np. 002, 004, 005">
-						<small>– wysyłają surowce jak zwykłe wioski</small></td></tr>
+						<small>– opcjonalnie; nie biorą udziału; numery, zakresy albo nazwy po przecinku</small></td></tr>
+					<tr><td>Najdłuższa trasa</td><td>do <input type="text" id="${NS}_maxroute" value="${String(s.maxRoute).replace('.', ',')}" style="width:35px"> pól
+						<small>– więcej = mniej Pałaców do pilnowania i większe grupy, ale wolniejsze fale</small></td></tr>
+					<tr><td>Za daleko</td><td>wioski dalej niż <input type="text" id="${NS}_far" value="${String(s.far).replace('.', ',')}" style="width:35px"> pól od każdego Pałacu pomijam</td></tr>
 					<tr><td>Pałac w budowie</td><td><label><input type="checkbox" id="${NS}_queued" ${s.useQueued ? 'checked' : ''}> licz jak gotowy Pałac</label></td></tr>
 					<tr><td>Bonus flagi</td><td>gdy grupa ma co najmniej <input type="text" id="${NS}_bonus" value="${s.bonusMin}" style="width:30px"> wiosek wysyłających</td></tr>
 				</table>
@@ -152,7 +196,9 @@
 			</div>`);
 		const redraw = () => {
 			const cur = {
-				skip: String($(`#${NS}_skip`).val()), noMint: String($(`#${NS}_nomint`).val()),
+				skip: String($(`#${NS}_skip`).val()),
+				maxRoute: Math.max(1, Number(String($(`#${NS}_maxroute`).val()).replace(',', '.')) || DEFAULTS.maxRoute),
+				far: Math.max(1, Number(String($(`#${NS}_far`).val()).replace(',', '.')) || DEFAULTS.far),
 				useQueued: $(`#${NS}_queued`).is(':checked'), bonusMin: Math.max(1, parseInt($(`#${NS}_bonus`).val(), 10) || DEFAULTS.bonusMin)
 			};
 			storageSet('settings', cur);
@@ -175,7 +221,8 @@
 				<td class="num">${fmt(g.base.res)}</td>
 				<td class="num">${fmt(g.base.coins)} → ${fmt(g.top.coins)}</td>
 				<td>${i === 0 ? '<b>najlepsza</b>' : `${i + 1}. najlepsza`}</td>
-				<td>${bonus ? `<b style="color:#060">TAK</b> <small>+${fmt(g.bonus.coins - g.top.coins)} monet/falę</small>` : '<small>nie</small>'}</td></tr>`;
+				<td>${bonus ? `<b style="color:#060">TAK</b> <small>+${fmt(g.bonus.coins - g.top.coins)} monet/falę</small>` : '<small>nie</small>'}</td>
+				<td>${g.senders.length ? g.senders.slice().sort((p, q) => p.d - q.d).map(x => `${esc(x.v.name)} <small>(${f1(x.d)})</small>`).join(', ') : '<small>tylko własne surowce</small>'}</td></tr>`;
 		}).join('');
 		const cand = a.candidates.map(x => `<tr>
 			<td><b>${esc(x.c.name)}</b> <small>${x.c.x}|${x.c.y}</small></td>
@@ -183,15 +230,15 @@
 			<td class="num">${f1(x.after.avg)} <small>(teraz ${f1(a.now.avg)})</small></td>
 			<td class="num">${x.takes}</td>
 			<td>${x.missing.length ? `<span style="color:#b00">brakuje: ${x.missing.join(', ')}</span>` : '<span style="color:#060">spełnia wymagania</span>'}</td></tr>`).join('');
-		const assignRows = a.ranking.map(g => `<tr><td><b>${tag(g.palace)}</b></td><td>${g.senders.length
-			? g.senders.slice().sort((p, q) => p.d - q.d).map(x => `${esc(x.v.name)} <small>(${f1(x.d)})</small>`).join(', ') : '<small>sama</small>'}</td></tr>`).join('');
 		return `
-			<p style="margin:8px 0 4px 0">Wioski z Pałacem: <b>${a.palaces.length}</b>, wysyłające: <b>${a.active.length - a.palaces.length}</b>${a.skipped ? `, pominięte: ${a.skipped}` : ''}.
+			<p style="margin:8px 0 4px 0">Bij monety w <b>${a.palaces.length}</b> Pałacach, wysyłające: <b>${a.active.length - a.palaces.length}</b>${a.skipped ? `, pominięte: ${a.skipped}` : ''}.
+				${a.resting.length ? `<br>Pałace, które lepiej niech <b>wysyłają</b>, a nie biją: <b>${a.resting.length <= 12 ? a.resting.map(v => esc(v.name)).join(', ') : a.resting.length + ' wiosek'}</b> <small>– bez nich trasy mieszczą się w ${String(s.maxRoute).replace('.', ',')} pola (bicie we wszystkich Pałacach: ${a.best.longest ? f1(a.best.longest.d) : '0'})</small>` : ''}
+				${a.tooFar.length ? `<br>Za daleko od Pałaców, pomijam: <small>${a.tooFar.map(v => esc(v.name)).join(', ')}</small>` : ''}<br>
 				Najdłuższa trasa: <b>${L ? `${f1(L.d)} pola` : '–'}</b>${L ? ` <small>(${esc(L.v.name)} → ${esc(L.p.name)}) – to ona wyznacza tempo fal</small>` : ''}</p>
 			<table class="vis" style="width:100%">
-				<tr><th colspan="8">Flagi i Bonus flagi – ranking wiosek z Pałacem</th></tr>
-				<tr><th>#</th><th>Pałac</th><th>Wiosek wysył.</th><th>Najdalej (pola)</th><th>Surowce/falę<br><small>każdego rodzaju</small></th>
-					<th>Monet/falę<br><small>bez flagi → fioletowa</small></th><th>Flaga</th><th>Bonus flagi<br><small>przy fioletowej</small></th></tr>
+				<tr><th colspan="9">Gdzie bić monety, skąd brać surowce, jaka flaga</th></tr>
+				<tr><th>#</th><th>Bij monety w</th><th>Wiosek wysył.</th><th>Najdalej (pola)</th><th>Surowce/falę<br><small>każdego rodzaju</small></th>
+					<th>Monet/falę<br><small>bez flagi → fioletowa</small></th><th>Flaga</th><th>Bonus flagi<br><small>przy fioletowej</small></th><th>Pobieraj surowce z <small>(odległość)</small></th></tr>
 				${rank}
 			</table>
 			<p style="margin:4px 0 8px 0"><small>Najlepszą flagę „Obniżenie kosztu monet” zakładaj na 1. miejscu, drugą na 2. itd. Fala = pakiet surowców (10% spichlerza) w każdej wiosce grupy.
@@ -200,9 +247,7 @@
 				<tr><th colspan="5">Gdzie zbudować nowy Pałac – 5 najlepszych miejsc</th></tr>
 				<tr><th>Wioska</th><th>Najdłuższa trasa</th><th>Średnia trasa</th><th>Przejmie wiosek</th><th>Wymagania</th></tr>
 				${cand || '<tr><td colspan="5"><small>każda wioska ma już Pałac</small></td></tr>'}
-			</table>
-			<details style="margin-top:6px"><summary style="cursor:pointer"><b>Która wioska do którego Pałacu</b> <small>(w nawiasie odległość)</small></summary>
-				<table class="vis" style="width:100%;margin-top:4px">${assignRows}</table></details>`;
+			</table>`;
 	}
 
 	// ---------- Start ----------
