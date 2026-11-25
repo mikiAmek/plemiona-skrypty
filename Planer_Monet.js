@@ -1,5 +1,5 @@
 /*
- * Planer Monet v1.5.0
+ * Planer Monet v1.5.1
  * Autor: Mavionis
  *
  * Przegląd > Budynki: uruchom skrypt. (Na innym ekranie przenosi do Przeglądu > Budynki ze wszystkimi wioskami.)
@@ -7,7 +7,7 @@
  * Pomaga w biciu złotych monet:
  *  - sam wybiera, w których Pałacach bić monety: jak najmniej Pałaców (mniej flag do pilnowania, większe grupy),
  *    tak, żeby najdłuższa trasa kupców nie przekroczyła ustawionej (domyślnie 4,5 pola); reszta wysyła do najbliższego.
- *    Działa też, gdy Pałac jest prawie wszędzie,
+ *    Działa też, gdy Pałac jest prawie wszędzie.
  *  - pomija wioski leżące daleko od wszystkich Pałaców (np. osobna wyspa),
  *  - układa wioski z Pałacem w ranking: gdzie założyć najlepszą flagę „Obniżenie kosztu monet” i gdzie Bonus flagi,
  *  - wskazuje, gdzie zbudować nowy Pałac, żeby najbardziej skrócić trasy (z wymaganiami: Ratusz 20, Kuźnia 20, Rynek 10).
@@ -17,7 +17,7 @@
 	'use strict';
 
 	const NAME = 'Planer Monet';
-	const VERSION = 'v1.5.0';
+	const VERSION = 'v1.5.1';
 	const NS = 'PlanerMonet';
 	const COIN = { wood: 28000, stone: 30000, iron: 25000 };   // koszt 1 monety bez flagi
 	const PACKAGE = 0.10;                                        // pakiet surowców: 10% pojemności spichlerza
@@ -180,7 +180,7 @@
 			const g = after.groups.find(x => x.palace.id === c.id);
 			const missing = Object.keys(PALACE_REQ).filter(k => c[k] < PALACE_REQ[k]).map(k => `${REQ_NAMES[k]} ${c[k]}/${PALACE_REQ[k]}`);
 			return { c, after, takes: g.senders.length, missing };
-		}).sort((a, b) => a.after.longest.d - b.after.longest.d || a.after.avg - b.after.avg || b.takes - a.takes)
+		}).sort((a, b) => (a.after.longest ? a.after.longest.d : 0) - (b.after.longest ? b.after.longest.d : 0) || a.after.avg - b.after.avg || b.takes - a.takes)
 			.slice(0, 5);
 		return { active, skipped: villages.length - active.length - tooFar.length, tooFar, palaces, resting, best, now, ranking, candidates, variants: list, recommended, chosen };
 	}
@@ -253,7 +253,7 @@
 		}).join('');
 		const cand = a.candidates.map(x => `<tr>
 			<td><b>${esc(x.c.name)}</b> <small>${x.c.x}|${x.c.y}</small></td>
-			<td class="num">${f1(x.after.longest.d)} <small>(teraz ${f1(L.d)})</small></td>
+			<td class="num">${f1(x.after.longest ? x.after.longest.d : 0)} <small>(teraz ${f1(L ? L.d : 0)})</small></td>
 			<td class="num">${f1(x.after.avg)} <small>(teraz ${f1(a.now.avg)})</small></td>
 			<td class="num">${x.takes}</td>
 			<td>${x.missing.length ? `<span style="color:#b00">brakuje: ${x.missing.join(', ')}</span>` : '<span style="color:#060">spełnia wymagania</span>'}</td></tr>`).join('');
@@ -272,33 +272,37 @@
 				${a.resting.length ? `<br>Pałace, które lepiej niech <b>wysyłają</b>, a nie biją: <b>${a.resting.length <= 12 ? a.resting.map(v => esc(v.name)).join(', ') : a.resting.length + ' wiosek'}</b> <small>– wysyłają surowce jak zwykłe wioski</small>` : ''}
 				${a.tooFar.length ? `<br>Za daleko od Pałaców, pomijam: <small>${a.tooFar.map(v => esc(v.name)).join(', ')}</small>` : ''}<br>
 				Najdłuższa trasa: <b>${L ? `${f1(L.d)} pola` : '–'}</b>${L ? ` <small>(${esc(L.v.name)} → ${esc(L.p.name)}) – to ona wyznacza tempo fal</small>` : ''}</p>
-			<table class="vis" style="width:100%">
+			<div style="overflow-x:auto"><table class="vis" style="width:100%">
 				<tr><th colspan="9">Gdzie bić monety, skąd brać surowce, jaka flaga</th></tr>
 				<tr><th>#</th><th>Bij monety w</th><th>Wiosek wysył.</th><th>Najdalej (pola)</th><th>Surowce/falę<br><small>każdego rodzaju</small></th>
 					<th>Monet/falę<br><small>bez flagi → fioletowa</small></th><th>Flaga</th><th>Bonus flagi<br><small>przy fioletowej</small></th><th>Pobieraj surowce z <small>(odległość)</small></th></tr>
 				${rank}
-			</table>
+			</table></div>
 			<p style="margin:4px 0 2px 0">Współrzędne wszystkich Pałaców do bicia (np. grupa „Monety”): <a href="#" class="${NS}_copy" data-coords="${a.ranking.map(g => `${g.palace.x}|${g.palace.y}`).join(' ')}">[współrzędne]</a></p>
 			<div id="${NS}_copybox" style="display:none;margin:2px 0"><input type="text" readonly style="width:95%"> <br><small>Skopiowane do schowka (jeśli przeglądarka pozwoliła) – wklej w Grupy &gt; Ręczne grupy &gt; „Dodaj współrzędne”.</small></div>
 			<p style="margin:4px 0 8px 0"><small>Najlepszą flagę „Obniżenie kosztu monet” zakładaj na 1. miejscu, drugą na 2. itd. Fala = pakiet surowców (10% spichlerza) w każdej wiosce grupy.
 				Bonus flagi opłaca się przy intensywnych falach (ok. 30+ pakietów w 48 h); zmiana flagi kasuje bonus.</small></p>
-			<table class="vis" style="width:100%">
+			<div style="overflow-x:auto"><table class="vis" style="width:100%">
 				<tr><th colspan="5">Gdzie zbudować nowy Pałac – 5 najlepszych miejsc</th></tr>
 				<tr><th>Wioska</th><th>Najdłuższa trasa</th><th>Średnia trasa</th><th>Przejmie wiosek</th><th>Wymagania</th></tr>
 				${cand || '<tr><td colspan="5"><small>każda wioska ma już Pałac</small></td></tr>'}
-			</table>`;
+			</table></div>`;
 	}
 
 	// ---------- Start ----------
 	function main() {
 		if (typeof game_data === 'undefined') { notify(`${NAME}: uruchom skrypt w grze.`); return; }
 		const url = location.href;
-		const onBuildings = game_data.screen === 'overview_villages' && $('#buildings_table').length > 0;
+		const onBuildings = game_data.screen === 'overview_villages' && (game_data.mode === 'buildings' || /[?&]mode=buildings(&|$)/.test(url));
 		// zawsze wszystkie wioski: strona „wszystkie” i grupa „wszystkie” (gra pamięta ostatnio wybraną grupę)
 		const allGroup = String(game_data.group_id ?? '0') === '0';
 		if (!onBuildings || !/[?&]page=-1(&|$)/.test(url) || !allGroup) {
 			const t = game_data.player.sitter && Number(game_data.player.sitter) > 0 ? '&t=' + game_data.player.id : '';
 			location.href = `/game.php?village=${game_data.village.id}${t}&screen=overview_villages&mode=buildings&group=0&page=-1`;
+			return;
+		}
+		if (!$('#buildings_table').length) {
+			notify(`${NAME}: nie widzę tabeli budynków – otwórz Przegląd > Budynki w zwykłym widoku gry (nie mobilnym) i uruchom skrypt ponownie.`, 'ErrorMessage');
 			return;
 		}
 		const villages = readVillages();
