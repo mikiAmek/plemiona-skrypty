@@ -1,5 +1,5 @@
 /*
- * Planer v2.2.1
+ * Planer v2.3.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.2.1';
+	const VERSION = 'v2.3.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -325,7 +325,16 @@
 		if (!$('#' + NS + '_css').length) {
 			$('head').append(`<style id="${NS}_css">#${NS} label{display:inline;margin:0 6px 0 0;white-space:nowrap}#${NS} input{vertical-align:middle}
 				#${NS} small{color:#5a4a2a}#${NS} td.num{text-align:right}#${NS} .pk-ok{background:#c8e6b0}#${NS} .pk-late{color:#999;text-decoration:line-through}
-				#${NS} .pk-soon{color:#b00;font-weight:bold}#${NS} .pk-zero{color:#bbb}#${NS} .pk-off{font-weight:bold}#${NS} tr.pk-sel td{background:#f4e0a8}</style>`);
+				#${NS} .pk-soon{color:#b00;font-weight:bold}#${NS} .pk-zero{color:#bbb}#${NS} .pk-off{font-weight:bold}#${NS} tr.pk-sel td{background:#f4e0a8}
+				@media (max-width: 700px) {
+					#${NS}{padding:4px !important;font-size:13px}
+					#${NS} h3 span{float:none !important;display:block}
+					#${NS} table.pk-form td{display:block;width:auto !important;border:0}
+					#${NS} table.pk-form tr > td:first-child{font-weight:bold;padding:6px 4px 0}
+					#${NS} table.pk-form tr{display:block;border-bottom:1px solid #d6c08e}
+					#${NS} .pk-hint{display:none}
+					#${NS} input[type=text]{font-size:14px}
+				}</style>`);
 		}
 		const unitBoxes = UNITS.filter(n => n !== 'snob' && n !== 'knight' && game_data.units.includes(n)).map(n =>
 			`<label><input type="checkbox" class="${NS}_unit" value="${n}" ${s.offUnits.includes(n) ? 'checked' : ''}> ${LABEL[n]}</label>`).join('');
@@ -334,15 +343,15 @@
 		$($('#content_value').length ? '#content_value' : '#mobileContent').first().prepend(`
 			<div id="${NS}" class="vis" style="padding:8px;margin-bottom:10px">
 				<h3 style="margin:0 0 6px 0">${NAME} <small>${VERSION}</small> <span style="float:right;font-size:12px">Zegar gry: <b id="${NS}_clock"></b></span></h3>
-				<table class="vis" style="width:100%">
+				<table class="vis pk-form" style="width:100%">
 					<tr><th colspan="2">Cel: ${esc(target.name)} (${target.x}|${target.y})</th></tr>
 					<tr><td style="width:170px">Rodzaj</td><td>
-						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
-						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: na godzinę ataku przychodzącego</small></td></tr>
+						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small class="pk-hint">– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
+						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small class="pk-hint">– wojsko z każdej wioski wchodzi pomiędzy grube: na godzinę ataku przychodzącego</small></td></tr>
 					<tr><td>${s.mode === 'klin' ? 'Atak przychodzący' : 'Wejście offa'}</td><td>
 						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
-						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
+						<small class="pk-hint">– data i godzina (czas serwera), ms opcjonalnie</small>
 						<span class="pk-klinonly"><small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
 						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea>
 						<small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę –
@@ -350,18 +359,18 @@
 					<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${pageIncomingsHtml()}</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>szlachciców w karecie: <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px">
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
-						<small>(albo wpisz ile chcesz; 0 = sam off; 1. szlachcic idzie w offie)</small>
+						<small class="pk-hint">(albo wpisz ile chcesz; 0 = sam off; 1. szlachcic idzie w offie)</small>
 						<span id="${NS}_reservebox" style="${s.nobles === 0 ? '' : 'display:none'}"><br>sam off – zostaw w wiosce eskortę na
 						<input type="text" id="${NS}_reserve" value="${s.reserve}" style="width:25px"> szlachciców <small>(0 = cały off)</small></span>
 						<br>eskorta każdego następnego szlachcica:
 						${escortInputs(s)}</td></tr>
 					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
-						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small>(Top, LK, ŁnK, CK, tarany, katapulty)</small>
-						<label><input type="radio" name="${NS}_preset" value="deff" ${s.preset === 'deff' ? 'checked' : ''}> defensywne</label> <small>(Pik, Miecz, Łuk, CK)</small>
+						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small class="pk-hint">(Top, LK, ŁnK, CK, tarany, katapulty)</small>
+						<label><input type="radio" name="${NS}_preset" value="deff" ${s.preset === 'deff' ? 'checked' : ''}> defensywne</label> <small class="pk-hint">(Pik, Miecz, Łuk, CK)</small>
 						<label><input type="radio" name="${NS}_preset" value="all" ${s.preset === 'all' ? 'checked' : ''}> wszystkie</label>
 						<label><input type="radio" name="${NS}_preset" value="custom" ${s.preset === 'custom' ? 'checked' : ''}> własne:</label>
 						<span id="${NS}_custom" style="${s.preset === 'custom' ? '' : 'display:none'}">${unitBoxes}</span>
-						<br><small class="pk-atakonly">Przy karecie 1. szlachcic idzie w offie, a od offa odejmowana jest eskorta pozostałych szlachciców.</small></td></tr>
+						<br><small class="pk-atakonly pk-hint">Przy karecie 1. szlachcic idzie w offie, a od offa odejmowana jest eskorta pozostałych szlachciców.</small></td></tr>
 					<tr><td>Wioski</td><td>grupa <select id="${NS}_group">${groupOpts}</select>
 						&nbsp; off co najmniej <input type="text" id="${NS}_minpop" value="${s.minPop}" style="width:50px"> populacji</td></tr>
 				</table>
