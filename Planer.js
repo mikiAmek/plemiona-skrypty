@@ -1,5 +1,5 @@
 /*
- * Planer v1.2.0
+ * Planer v1.3.0
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -13,7 +13,8 @@
  * (domyślnie 20 toporników + 20 LK) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
  * ofensywne (domyślnie), wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
  * atak klikasz sam. Rozpiska BB: off i jego szlachcice w jednym wierszu.
- * Godzinę wejścia wpisujesz ręcznie albo bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
+ * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
+ * Godzinę wpisujesz ręcznie albo bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
  * je widać) i „Pobierz z ataków” wpisze czas ostatniego grubego z karety (ostatni z serii ataków z jednej wioski
  * co ≤ 1 s). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
@@ -22,7 +23,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.2.0';
+	const VERSION = 'v1.3.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -61,6 +62,10 @@
 		const ms = m[7] ? Number(m[7].padEnd(3, '0')) : 0;
 		return Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +m[6], ms) - utcDiff();
 	}
+	// „27.11.2026 20:15:30:250” ↔ ['27.11.2026', '20:15:30:250']
+	const splitLanding = text => { const m = String(text || '').trim().match(/^(\S+)\s+(\S+)$/); return m ? [m[1], m[2]] : ['', String(text || '').trim()]; };
+	const todayStr = (plusDays = 0) => fmtTime(nowMs() + plusDays * 86400000, true).slice(0, 10);
+
 	// ---------- Czas z ataków (kareta) ----------
 	// wiersz: „… (416|471) K44 … Czas przybycia: 19.11.26 10:22:55:237 …” – zwykły tekst albo z linkami [..](..)
 	const INCOMING_RE = /\((\d{1,3}\|\d{1,3})\)[^\n]*?Czas przybycia:\s*(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})[:.,](\d{1,3})/;
@@ -279,13 +284,15 @@
 					<tr><td style="width:170px">Rodzaj</td><td>
 						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski, wszystkie wchodzą o tej samej godzinie</small><br>
 						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– off, a za nim szlachcice co kilka ms (szlachcice mogą iść z innych wiosek)</small></td></tr>
-					<tr><td>Wejście ${s.mode === 'klin' ? 'offa' : 'ataków'}</td><td><input type="text" id="${NS}_landing" value="${esc(s.landing)}" placeholder="27.11.2026 20:15:30:000" style="width:190px">
-						<small>– czas serwera, dd.mm.rrrr gg:mm:ss:mmm</small>
+					<tr><td>Wejście ${s.mode === 'klin' ? 'offa' : 'ataków'}</td><td>
+						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
+						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
+						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
 						<button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
 						<small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
 						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry (opcjonalnie) – wpisze się czas ostatniego grubego z karety. Puste pole = ataki ze strony."></textarea></td></tr>
-					<tr class="pk-klinopt"><td>Szlachcice</td><td><input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> w klinie, co
-						<input type="text" id="${NS}_gap" value="${s.gap}" style="width:40px"> ms po offie; eskorta każdego:
+					<tr class="pk-klinopt"><td>Szlachcice za offem</td><td>wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców, każdy wchodzi
+						<input type="text" id="${NS}_gap" value="${s.gap}" style="width:40px"> ms po poprzednim (pierwszy – po offie); eskorta na szlachcica:
 						<input type="text" id="${NS}_escaxe" value="${s.escAxe}" style="width:35px"> Top +
 						<input type="text" id="${NS}_esclight" value="${s.escLight}" style="width:35px"> LK</td></tr>
 					<tr><td style="vertical-align:top">Wojska w offie</td><td>
@@ -300,9 +307,21 @@
 				<div id="${NS}_out" style="margin-top:6px"></div>
 			</div>`);
 		$(`#${NS} .pk-klinopt`).toggle(s.mode === 'klin');
+		// data + godzina → „dd.mm.rrrr gg:mm:ss:mmm”; bez ręcznej daty: dzisiaj, a gdy godzina już minęła – jutro
+		const readLanding = () => {
+			const time = String($(`#${NS}_ltime`).val()).trim();
+			if (!time) { return ''; }
+			let date = String($(`#${NS}_ldate`).val()).trim() || todayStr();
+			if (!state.dateManual && date === todayStr()) {
+				const t = parseLanding(`${date} ${time}`);
+				if (t !== null && t < nowMs()) { date = todayStr(1); $(`#${NS}_ldate`).val(date); }
+			}
+			state.ldate = date;
+			return `${date} ${time}`;
+		};
 		const read = () => ({
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'klin',
-			landing: String($(`#${NS}_landing`).val()).trim(),
+			landing: readLanding(),
 			gap: num($(`#${NS}_gap`).val(), DEFAULTS.gap), nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
 			escAxe: num($(`#${NS}_escaxe`).val(), DEFAULTS.escAxe), escLight: num($(`#${NS}_esclight`).val(), DEFAULTS.escLight),
 			minPop: num($(`#${NS}_minpop`).val(), 0), group: String($(`#${NS}_group`).val()),
@@ -323,13 +342,18 @@
 			const info = $(`#${NS}_fetchinfo`);
 			if (!t) { if (force) { info.text('nie znaleziono karety – wpisz godzinę ręcznie'); } return; }
 			if (!force && state.landingManual) { info.text(`ostatni gruby: ${t} (zostawiam ręczną godzinę)`); return; }
-			$(`#${NS}_landing`).val(t);
+			const [d, tm] = splitLanding(t);
+			$(`#${NS}_ldate`).val(d); $(`#${NS}_ltime`).val(tm);
+			state.ldate = d; state.dateManual = true;
 			state.landingManual = false;
 			info.text('z ataków');
 			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
 			draw(state);
 		};
-		$('#' + NS).on('input', `#${NS}_landing`, () => { state.landingManual = true; $(`#${NS}_fetchinfo`).text('ręcznie'); });
+		$('#' + NS).on('input', `#${NS}_ltime, #${NS}_ldate`, function () {
+			state.landingManual = true; $(`#${NS}_fetchinfo`).text('ręcznie');
+			if (this.id === `${NS}_ldate`) { state.dateManual = true; }
+		});
 		$('#' + NS).on('input', `#${NS}_incomings`, () => fillFromIncomings(false));
 		$('#' + NS).on('click', `#${NS}_fetch`, e => { e.preventDefault(); fillFromIncomings(true); });
 		$('#' + NS).on('change', `#${NS}_group`, async () => {
