@@ -1,5 +1,5 @@
 /*
- * Planer v1.6.0
+ * Planer v1.6.1
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -8,7 +8,7 @@
  *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
  *    z tej samej wioski, wysłane razem; odstępy ms między nimi ustala gra; eskorta każdego szlachcica odejmowana od offa),
  *  - Klin: wojsko (ofensywne, defensywne, wszystkie albo własne) z każdej wioski wchodzi pomiędzy grube –
- *    X ms przed ostatnim grubym z karety wroga.
+ *    na godzinę ostatniego grubego z karety wroga.
  * Wojska w domu ze wszystkich wiosek wybranej grupy (Przegląd > Wojska, wszystkie strony), dokładny zegar gry
  * (milisekundy), czas podróży zaokrąglany do pełnej sekundy jak w grze, eskorta każdego szlachcica
  * (domyślnie 20 toporników + 20 LK) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
@@ -24,13 +24,13 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.6.0';
+	const VERSION = 'v1.6.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
 	const LABEL = { spear: 'Pik', sword: 'Miecz', axe: 'Top', archer: 'Łuk', spy: 'Zw', light: 'LK', marcher: 'ŁnK', heavy: 'CK', ram: 'Tar', catapult: 'Kat', knight: 'Ryc', snob: 'Szl' };
 	const DEFAULTS = {
-		mode: 'atak', landing: '', nobles: 4, klinBefore: 50, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
+		mode: 'atak', landing: '', nobles: 4, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
 		offUnits: ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult']
 	};
 
@@ -108,7 +108,6 @@
 		s.escLight = num(s.escLight, DEFAULTS.escLight);
 		s.minPop = num(s.minPop, 0);
 		if (!['atak', 'klin'].includes(s.mode)) { s.mode = 'atak'; }
-		s.klinBefore = num(s.klinBefore, DEFAULTS.klinBefore);
 		if (!['off', 'deff', 'all', 'custom'].includes(s.preset)) { s.preset = 'off'; }
 		if (!Array.isArray(s.offUnits)) { s.offUnits = DEFAULTS.offUnits.slice(); }
 		return s;
@@ -254,14 +253,13 @@
 					<tr><th colspan="2">Cel: ${esc(target.name)} (${target.x}|${target.y})</th></tr>
 					<tr><td style="width:170px">Rodzaj</td><td>
 						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
-						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: tuż przed ostatnim grubym z karety</small></td></tr>
+						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: na godzinę ostatniego grubego z karety</small></td></tr>
 					<tr><td>${s.mode === 'klin' ? 'Godzina ostatniego grubego' : 'Wejście offa'}</td><td>
 						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
 						<span class="pk-klinonly"><small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
 						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea></span></td></tr>
-					<tr class="pk-klinonly"><td>Klin wchodzi</td><td><input type="text" id="${NS}_klinbefore" value="${s.klinBefore}" style="width:40px"> ms przed ostatnim grubym</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
 						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
@@ -295,7 +293,6 @@
 		};
 		const read = () => ({
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'atak',
-			klinBefore: num($(`#${NS}_klinbefore`).val(), DEFAULTS.klinBefore),
 			landing: readLanding(),
 			nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
 			escAxe: num($(`#${NS}_escaxe`).val(), DEFAULTS.escAxe), escLight: num($(`#${NS}_esclight`).val(), DEFAULTS.escLight),
@@ -374,10 +371,10 @@
 
 		if (s.mode === 'klin' || s.nobles === 0) {   // klin albo sam off: z każdej wioski jeden rozkaz
 			const klin = s.mode === 'klin';
-			const land = klin ? landing - s.klinBefore : landing;
+			const land = landing;
 			const rows = planAttacks(villages, target, s, speeds, land);
-			state.bb = bbAttacks(rows, target, land, klin ? `klin (${s.klinBefore} ms przed ostatnim grubym ${fmtTime(landing)})` : 'wejście');
-			out.html(`<p style="margin:0 0 4px 0">${klin ? 'Klinów' : 'Ataków'}: <b>${rows.length}</b> z ${villages.length} wiosek, wejście: <b>${fmtTime(land, true)}</b>${klin ? ` (${s.klinBefore} ms przed ostatnim grubym)` : ''}. ${bbLink}</p>
+			state.bb = bbAttacks(rows, target, land, klin ? 'klin – wejście' : 'wejście');
+			out.html(`<p style="margin:0 0 4px 0">${klin ? 'Klinów' : 'Ataków'}: <b>${rows.length}</b> z ${villages.length} wiosek, wejście: <b>${fmtTime(land, true)}</b>. ${bbLink}</p>
 				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop.</th><th>Atak</th></tr>
 				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
 					${unitCells(r.v, r.off.units)}<td class="num">${r.off.pop}</td>${cmdCell(r.off, r.v, target, klin ? 'Klin' : 'Atak')}</tr>`).join('')
