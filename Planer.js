@@ -1,5 +1,5 @@
 /*
- * Planer v1.7.1
+ * Planer v1.8.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -12,7 +12,7 @@
  *    na godzinę ostatniego grubego z karety wroga.
  * Wojska w domu ze wszystkich wiosek wybranej grupy (Przegląd > Wojska, wszystkie strony), dokładny zegar gry
  * (milisekundy), czas podróży zaokrąglany do pełnej sekundy jak w grze, eskorta każdego szlachcica
- * (domyślnie 20 toporników + 20 LK) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
+ * (domyślnie 20 toporników + 20 LK, można dodać własne jednostki) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
  * ofensywne (domyślnie), defensywne, wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
  * atak klikasz sam. Rozpiska BB: off i jego szlachcice w jednym wierszu.
  * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
@@ -25,15 +25,17 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.7.1';
+	const VERSION = 'v1.8.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
 	const LABEL = { spear: 'Pik', sword: 'Miecz', axe: 'Top', archer: 'Łuk', spy: 'Zw', light: 'LK', marcher: 'ŁnK', heavy: 'CK', ram: 'Tar', catapult: 'Kat', knight: 'Ryc', snob: 'Szl' };
 	const DEFAULTS = {
-		mode: 'atak', landing: '', nobles: 4, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
+		mode: 'atak', landing: '', nobles: 4, escort: { axe: 20, light: 20 }, minPop: 0, group: '0', preset: 'off',
 		offUnits: ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult']
 	};
+
+	const ESCORT_UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult'];
 
 	// ---------- Narzędzia ----------
 	const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -128,8 +130,12 @@
 	function loadSettings() {
 		const s = Object.assign({}, DEFAULTS, storageGet('ustawienia') || {});
 		s.nobles = Math.min(num(s.nobles, DEFAULTS.nobles), 10);
-		s.escAxe = num(s.escAxe, DEFAULTS.escAxe);
-		s.escLight = num(s.escLight, DEFAULTS.escLight);
+		// eskorta szlachcica: { jednostka: liczba }; starsze ustawienia miały tylko escAxe / escLight
+		const e = s.escort && typeof s.escort === 'object' ? s.escort
+			: { axe: num(s.escAxe, 20), light: num(s.escLight, 20) };
+		s.escort = {};
+		ESCORT_UNITS.forEach(n => { const c = num(e[n], 0); if (c > 0) { s.escort[n] = c; } });
+		delete s.escAxe; delete s.escLight;
 		s.minPop = num(s.minPop, 0);
 		if (!['atak', 'klin'].includes(s.mode)) { s.mode = 'atak'; }
 		if (!['off', 'deff', 'all', 'custom'].includes(s.preset)) { s.preset = 'off'; }
@@ -209,21 +215,20 @@
 	function villageInfo(v, target, s, speeds, k) {
 		const u = v.units;
 		const dist = Math.hypot(v.x - target.x, v.y - target.y);
-		const left = Object.assign({}, u, { axe: (u.axe || 0) - k * s.escAxe, light: (u.light || 0) - k * s.escLight });
+		const left = Object.assign({}, u);
+		Object.keys(s.escort).forEach(n => { left[n] = (u[n] || 0) - k * s.escort[n]; });
 		const off = {};
 		offUnitsOf(s).forEach(n => { if (n !== 'snob' && left[n] > 0) { off[n] = left[n]; } });
 		const pop = Object.keys(off).reduce((t, n) => t + off[n] * POP[n], 0);
 		const offTravel = travelMs(dist, Math.max(0, ...Object.keys(off).map(n => speeds[n] || 0)));
-		const escort = { snob: 1 };
-		if (s.escAxe) { escort.axe = s.escAxe; }
-		if (s.escLight) { escort.light = s.escLight; }
+		const escort = Object.assign({ snob: 1 }, s.escort);
 		const nobleTravel = travelMs(dist, Math.max(...Object.keys(escort).map(n => speeds[n] || 0)));
 		return { dist, off, pop, offTravel, escort, nobleTravel };
 	}
 	// ilu szlachciców wioska może wysłać z pełną eskortą
 	const maxNobles = (v, s) => {
 		let k = v.units.snob || 0;
-		while (k > 0 && ((v.units.axe || 0) < k * s.escAxe || (v.units.light || 0) < k * s.escLight)) { k--; }
+		while (k > 0 && Object.keys(s.escort).some(n => (v.units[n] || 0) < k * s.escort[n])) { k--; }
 		return k;
 	};
 
@@ -264,6 +269,16 @@
 			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]${fmtTime(r.cmd.send, true)}[|]${r.pop}[|]${s.nobles}`).join('\n') + '\n[/table]';
 	}
 	// ---------- Panel ----------
+	const escortText = s => Object.keys(s.escort).map(n => `${s.escort[n]} ${LABEL[n]}`).join(' + ');
+	// eskorta: Top i LK zawsze widoczne, pozostałe jednostki pod „własne”
+	function escortInputs(s) {
+		const box = n => `<label><input type="text" class="${NS}_esc" data-unit="${n}" value="${s.escort[n] || 0}" style="width:35px"> ${LABEL[n]}</label>`;
+		const others = ESCORT_UNITS.filter(n => n !== 'axe' && n !== 'light' && game_data.units.includes(n));
+		const open = others.some(n => s.escort[n]);
+		return `${box('axe')} ${box('light')}
+			<a href="#" id="${NS}_escmore">[własne${open ? ' ▲' : ' ▼'}]</a>
+			<span id="${NS}_escother" style="${open ? '' : 'display:none'}"><br>${others.map(box).join(' ')}</span>`;
+	}
 	function ownIncomingsHtml() {
 		const groups = readOwnIncomings();
 		if (!groups.length) { return '<small>brak ataków w „Wojska przybywające”</small>'; }
@@ -305,15 +320,14 @@
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
 						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
-						<input type="text" id="${NS}_escaxe" value="${s.escAxe}" style="width:35px"> Top +
-						<input type="text" id="${NS}_esclight" value="${s.escLight}" style="width:35px"> LK</td></tr>
+						${escortInputs(s)}</td></tr>
 					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
 						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small>(Top, LK, ŁnK, CK, tarany, katapulty)</small>
 						<label><input type="radio" name="${NS}_preset" value="deff" ${s.preset === 'deff' ? 'checked' : ''}> defensywne</label> <small>(Pik, Miecz, Łuk, CK)</small>
 						<label><input type="radio" name="${NS}_preset" value="all" ${s.preset === 'all' ? 'checked' : ''}> wszystkie</label>
 						<label><input type="radio" name="${NS}_preset" value="custom" ${s.preset === 'custom' ? 'checked' : ''}> własne:</label>
 						<span id="${NS}_custom" style="${s.preset === 'custom' ? '' : 'display:none'}">${unitBoxes}</span>
-						<br><small class="pk-atakonly">Przy karecie od toporników i LK odejmowana jest eskorta szlachciców z tej wioski.</small></td></tr>
+						<br><small class="pk-atakonly">Przy karecie od offa odejmowana jest eskorta szlachciców z tej wioski.</small></td></tr>
 					<tr><td>Wioski</td><td>grupa <select id="${NS}_group">${groupOpts}</select>
 						&nbsp; off co najmniej <input type="text" id="${NS}_minpop" value="${s.minPop}" style="width:50px"> populacji</td></tr>
 				</table>
@@ -337,7 +351,7 @@
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'atak',
 			landing: readLanding(),
 			nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
-			escAxe: num($(`#${NS}_escaxe`).val(), DEFAULTS.escAxe), escLight: num($(`#${NS}_esclight`).val(), DEFAULTS.escLight),
+			escort: (() => { const e = {}; $(`.${NS}_esc`).each(function () { const c = num(this.value, 0); if (c > 0) { e[this.dataset.unit] = c; } }); return e; })(),
 			minPop: num($(`#${NS}_minpop`).val(), 0), group: String($(`#${NS}_group`).val()),
 			preset: $(`input[name=${NS}_preset]:checked`).val() || 'off',
 			offUnits: $(`.${NS}_unit:checked`).map(function () { return this.value; }).get()
@@ -349,6 +363,11 @@
 			state.s = read(); storageSet('ustawienia', state.s);
 			if (modeChanged) { render(state); return; }
 			draw(state);
+		});
+		$('#' + NS).on('click', `#${NS}_escmore`, function (e) {
+			e.preventDefault();
+			const box = $(`#${NS}_escother`).toggle();
+			$(this).text(box.is(':visible') ? '[własne ▲]' : '[własne ▼]');
 		});
 		// szybki wybór liczby szlachciców: 3 / 4 / 5 (albo wpisz dowolną w polu)
 		$('#' + NS).on('click', `.${NS}_nq`, function (e) {
@@ -443,7 +462,7 @@
 				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Kareta</th></tr>
 				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
 					${unitCells(r.v, r.off)}<td class="num">${r.pop}</td>${cmdCell(r.cmd, r.v, target, `Kareta (${r.pop} + ${s.nobles} szl.)`)}</tr>`).join('')
-					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${s.escAxe} Top + ${s.escLight} LK na każdego)</small></td></tr>`}
+					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${escortText(s) || 'bez eskorty'} na każdego)</small></td></tr>`}
 				</table></div>${foot}
 				<p style="margin:2px 0 0 0"><small>Link otwiera Plac z wpisanym offem; szlachciców do karety dodajesz na Placu. Godzina wysyłki liczona tempem szlachcica.</small></p>`);
 			tick();
