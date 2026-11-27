@@ -1,5 +1,5 @@
 /*
- * Planer v1.6.1
+ * Planer v1.6.2
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -24,7 +24,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.6.1';
+	const VERSION = 'v1.6.2';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -253,8 +253,8 @@
 					<tr><th colspan="2">Cel: ${esc(target.name)} (${target.x}|${target.y})</th></tr>
 					<tr><td style="width:170px">Rodzaj</td><td>
 						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
-						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: na godzinę ostatniego grubego z karety</small></td></tr>
-					<tr><td>${s.mode === 'klin' ? 'Godzina ostatniego grubego' : 'Wejście offa'}</td><td>
+						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: na godzinę ataku przychodzącego</small></td></tr>
+					<tr><td>${s.mode === 'klin' ? 'Atak przychodzący' : 'Wejście offa'}</td><td>
 						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
