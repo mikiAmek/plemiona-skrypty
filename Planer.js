@@ -1,5 +1,5 @@
 /*
- * Planer v2.1.0
+ * Planer v2.1.1
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.1.0';
+	const VERSION = 'v2.1.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -398,6 +398,11 @@
 		// szybki wybór liczby szlachciców: 3 / 4 / 5 (albo wpisz dowolną w polu)
 		$('#' + NS).on('click', `.${NS}_nq`, function (e) {
 			e.preventDefault();
+			// wybór szlachciców przy pustej eskorcie: wpisz domyślne 20 Top + 20 LK
+			const all = $(`.${NS}_esc`);
+			if (Number($(this).data('n')) > 0 && !all.filter(function () { return num(this.value, 0) > 0; }).length) {
+				all.filter('[data-unit="axe"], [data-unit="light"]').val(20);
+			}
 			$(`#${NS}_nobles`).val($(this).data('n')).trigger('input');
 			$(`#${NS} .${NS}_nq`).css('font-weight', '').filter(this).css('font-weight', 'bold');
 		});
