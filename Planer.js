@@ -1,5 +1,5 @@
 /*
- * Planer v1.8.0
+ * Planer v1.8.1
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -25,7 +25,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.8.0';
+	const VERSION = 'v1.8.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -286,9 +286,7 @@
 			const last = g[g.length - 1];
 			const label = g.length > 1 ? `Kareta (${g.length}) – ostatni gruby ${last.text.slice(11)}` : `${esc(last.name || 'Atak')} – ${last.text.slice(11)}`;
 			return `<a href="#" class="${NS}_ownpick" data-time="${esc(last.text)}">${label}</a> <small>${last.text.slice(0, 10)}</small>`;
-		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>' +
-			'<br><small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę – ' +
-			'kilka offów w małym odstępie też może tak wyglądać. Sprawdź godziny w „Wojska przybywające”.</small>';
+		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>';
 	}
 	function render(state) {
 		const { s, target, groups } = state;
@@ -315,7 +313,9 @@
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
 						<span class="pk-klinonly"><small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
-						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea></span></td></tr>
+						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea>
+						<small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę –
+						kilka offów w małym odstępie też może tak wyglądać. Sprawdź godziny ataków.</small></span></td></tr>
 					${target.own ? `<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${ownIncomingsHtml()}</td></tr>` : ''}
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
