@@ -1,5 +1,5 @@
 /*
- * Planer v2.3.2
+ * Planer v2.3.3
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.3.2';
+	const VERSION = 'v2.3.3';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -336,6 +336,7 @@
 					#${NS} input[type=text]{font-size:14px}
 					#${NS}_ldate{width:7.5em !important}
 					#${NS}_ltime{width:9em !important}
+					#${NS} textarea{font-family:inherit;font-size:13px}
 				}</style>`);
 		}
 		const unitBoxes = UNITS.filter(n => n !== 'snob' && n !== 'knight' && game_data.units.includes(n)).map(n =>
