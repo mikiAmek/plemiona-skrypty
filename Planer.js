@@ -1,5 +1,5 @@
 /*
- * Planer v1.5.0
+ * Planer v1.5.1
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -24,7 +24,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.5.0';
+	const VERSION = 'v1.5.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -71,7 +71,7 @@
 	// wiersz: „… (416|471) K44 … Czas przybycia: 19.11.26 10:22:55:237 …” – zwykły tekst albo z linkami [..](..)
 	const INCOMING_RE = /\((\d{1,3}\|\d{1,3})\)[^\n]*?Czas przybycia:\s*(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})[:.,](\d{1,3})/;
 	const KARETA_GAP_MS = 1000;
-	// zwraca czas ostatniego grubego jako tekst do pola wejścia („19.11.2026 10:22:55:237”) albo null
+	// zwraca { text: „19.11.2026 10:22:55:237”, kareta: bool } – ostatni gruby z karety, a bez karety ostatni atak; albo null
 	function lastNobleFromLines(lines) {
 		const cmds = lines.map(line => {
 			const m = String(line).match(INCOMING_RE);
@@ -90,7 +90,8 @@
 			const prev = cmds.slice(0, i).reverse().find(p => p.coords === c.coords);
 			if (prev && c.t - prev.t <= KARETA_GAP_MS) { last = c; }
 		});
-		return last ? last.text : null;
+		if (last) { return { text: last.text, kareta: true }; }
+		return cmds.length ? { text: cmds[cmds.length - 1].text, kareta: false } : null;
 	}
 	// ataki z wklejki, a gdy pusta – z wierszy tabel na bieżącej stronie
 	function lastNobleTime(pasted) {
@@ -323,15 +324,16 @@
 		});
 		// czas z ataków: wklejka wpisuje sama, chyba że godzinę wpisano ręcznie; przycisk zawsze nadpisuje
 		const fillFromIncomings = force => {
-			const t = lastNobleTime($(`#${NS}_incomings`).val());
+			const found = lastNobleTime($(`#${NS}_incomings`).val());
+			const t = found && found.text;
 			const info = $(`#${NS}_fetchinfo`);
-			if (!t) { if (force) { info.text('nie znaleziono karety – wpisz godzinę ręcznie'); } return; }
+			if (!t) { if (force) { info.text('nie znaleziono ataków – wpisz godzinę ręcznie'); } return; }
 			if (!force && state.landingManual) { info.text(`ostatni gruby: ${t} (zostawiam ręczną godzinę)`); return; }
 			const [d, tm] = splitLanding(t);
 			$(`#${NS}_ldate`).val(d); $(`#${NS}_ltime`).val(tm);
 			state.ldate = d; state.dateManual = true;
 			state.landingManual = false;
-			info.text('z ataków');
+			info.text(found.kareta ? 'z karety (ostatni gruby)' : 'z ataków – brak karety, wzięty ostatni atak');
 			state.s = read(); storageSet('ustawienia', state.s);
 			draw(state);
 		};
