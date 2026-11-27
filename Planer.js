@@ -1,9 +1,10 @@
 /*
- * Planer v1.8.1
+ * Planer v1.9.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
- * wioska, tryb ustawia się na Klin, a ataki z „Wojska przybywające” są listą do kliknięcia (kareta = ataki co ≤ 1 s).
+ * wioska i tryb ustawia się na Klin. W Klinie ataki widoczne na stronie (okno własnej wioski albo rozkazy na stronie
+ * wioski, np. udostępnione przez plemię) są listą do kliknięcia (kareta = ataki co ≤ 1 s, z tej samej wioski, jeśli ją widać).
  *
  * Dwa tryby:
  *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
@@ -25,7 +26,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.8.1';
+	const VERSION = 'v1.9.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -96,27 +97,38 @@
 		if (last) { return { text: last.text, kareta: true }; }
 		return cmds.length ? { text: cmds[cmds.length - 1].text, kareta: false } : null;
 	}
-	// okno własnej wioski: ataki z widżetu „Wojska przybywające” („dzisiaj o 09:40:55:249”, „jutro o …”, „dnia 28.11. o …”)
-	function readOwnIncomings() {
+	// ataki widoczne na bieżącej stronie – czytane dopiero po uruchomieniu skryptu, wybór godziny kliknięciem
+	//  - okno własnej wioski: widżet „Wojska przybywające” („dzisiaj o 09:40:55:249”, „jutro o …”, „dnia 28.11. o …”),
+	//  - strona wioski: wiersze „… (416|471) K44 … Czas przybycia: 19.11.26 10:22:55:237 …”.
+	function readPageIncomings() {
 		const list = [];
 		$('#commands_incomings tr.command-row').each(function () {
 			if (!$(this).find('img[src*="/command/attack"]').length) { return; }   // tylko ataki, bez wsparć
 			const txt = $(this).find('td').eq(1).text().replace(/\s+/g, ' ').trim();
 			const m = txt.match(/(dzisiaj|jutro|dnia (\d{1,2})\.(\d{1,2})\.?)\s*o\s*(\d{1,2}):(\d{2}):(\d{2}):?(\d{0,3})/);
 			if (!m) { return; }
-			let date = m[1] === 'dzisiaj' ? todayStr() : m[1] === 'jutro' ? todayStr(1) : `${pad(m[2])}.${pad(m[3])}.${todayStr().slice(6)}`;
+			const date = m[1] === 'dzisiaj' ? todayStr() : m[1] === 'jutro' ? todayStr(1) : `${pad(m[2])}.${pad(m[3])}.${todayStr().slice(6)}`;
 			const text = `${date} ${pad(m[4])}:${m[5]}:${m[6]}:${(m[7] || '0').padEnd(3, '0')}`;
 			const t = parseLanding(text);
-			if (t !== null) { list.push({ t, text, name: $.trim($(this).find('.quickedit-label').text()) }); }
+			if (t !== null) { list.push({ t, text, key: '', name: $.trim($(this).find('.quickedit-label').text()) }); }
+		});
+		$('#content_value tr').each(function () {
+			if ($(this).find('tr').length || $(this).closest('#commands_incomings').length) { return; }   // tylko najniższe wiersze
+			const m = $(this).text().replace(/\s+/g, ' ').match(INCOMING_RE);
+			if (!m) { return; }
+			const year = m[4].length === 2 ? 2000 + Number(m[4]) : Number(m[4]);
+			const text = `${pad(m[2])}.${pad(m[3])}.${year} ${pad(m[5])}:${m[6]}:${m[7]}:${m[8].padEnd(3, '0')}`;
+			const t = parseLanding(text);
+			if (t !== null) { list.push({ t, text, key: m[1], name: m[1] }); }
 		});
 		list.sort((a, b) => a.t - b.t);
-		// kareta: kolejne ataki co ≤ 1 s (widżet nie pokazuje wioski źródłowej)
+		// kareta: ataki co ≤ 1 s po poprzednim (z tej samej wioski, jeśli strona ją pokazuje)
 		const groups = [];
 		list.forEach(c => {
-			const g = groups[groups.length - 1];
-			if (g && c.t - g[g.length - 1].t <= KARETA_GAP_MS) { g.push(c); } else { groups.push([c]); }
+			const g = groups.slice().reverse().find(x => x[0].key === c.key && c.t - x[x.length - 1].t <= KARETA_GAP_MS);
+			if (g) { g.push(c); } else { groups.push([c]); }
 		});
-		return groups;
+		return groups.sort((a, b) => a[a.length - 1].t - b[b.length - 1].t);
 	}
 
 	const lastNobleTime = pasted => lastNobleFromLines(String(pasted || '').split('\n'));
@@ -279,12 +291,13 @@
 			<a href="#" id="${NS}_escmore">[własne${open ? ' ▲' : ' ▼'}]</a>
 			<span id="${NS}_escother" style="${open ? '' : 'display:none'}"><br>${others.map(box).join(' ')}</span>`;
 	}
-	function ownIncomingsHtml() {
-		const groups = readOwnIncomings();
-		if (!groups.length) { return '<small>brak ataków w „Wojska przybywające”</small>'; }
+	function pageIncomingsHtml() {
+		const groups = readPageIncomings();
+		if (!groups.length) { return '<small>na tej stronie nie widać ataków – wklej je niżej albo wpisz godzinę</small>'; }
 		return groups.map(g => {
 			const last = g[g.length - 1];
-			const label = g.length > 1 ? `Kareta (${g.length}) – ostatni gruby ${last.text.slice(11)}` : `${esc(last.name || 'Atak')} – ${last.text.slice(11)}`;
+			const from = last.key ? ` z ${last.key}` : '';
+			const label = g.length > 1 ? `Kareta (${g.length})${from} – ostatni gruby ${last.text.slice(11)}` : `${esc(last.name || 'Atak')} – ${last.text.slice(11)}`;
 			return `<a href="#" class="${NS}_ownpick" data-time="${esc(last.text)}">${label}</a> <small>${last.text.slice(0, 10)}</small>`;
 		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>';
 	}
@@ -316,7 +329,7 @@
 						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea>
 						<small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę –
 						kilka offów w małym odstępie też może tak wyglądać. Sprawdź godziny ataków.</small></span></td></tr>
-					${target.own ? `<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${ownIncomingsHtml()}</td></tr>` : ''}
+					<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${pageIncomingsHtml()}</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
 						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
