@@ -1,5 +1,5 @@
 /*
- * Planer v1.9.1
+ * Planer v2.0.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -8,7 +8,8 @@
  *
  * Dwa tryby:
  *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
- *    z tej samej wioski, wysłane razem; odstępy ms między nimi ustala gra; eskorta każdego szlachcica odejmowana od offa),
+ *    z tej samej wioski, wysłane razem; 1. szlachcic idzie w offie, pozostali z eskortą odejmowaną od offa;
+ *    odstępy ms między nimi ustala gra),
  *  - Klin: wojsko (ofensywne, defensywne, wszystkie albo własne) z każdej wioski wchodzi pomiędzy grube –
  *    na godzinę ostatniego grubego z karety wroga.
  * Wojska w domu ze wszystkich wiosek wybranej grupy (Przegląd > Wojska, wszystkie strony), dokładny zegar gry
@@ -26,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.9.1';
+	const VERSION = 'v2.0.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -255,11 +256,14 @@
 	// tryb Atak z karetą: z każdej wioski, która ma n szlachciców z eskortą – jedna wysyłka (off + szlachcice razem).
 	// Kareta idzie tempem najwolniejszej jednostki (szlachcic), odstępy ms między rozkazami ustala gra.
 	function planKarety(villages, target, s, speeds, landing) {
+		// 1. szlachcic jedzie w offie (bez osobnej eskorty), pozostali n − 1 osobno z eskortą
 		const n = s.nobles;
-		return villages.filter(v => n > 0 && maxNobles(v, s) >= n).map(v => {
-			const i = villageInfo(v, target, s, speeds, n);
-			const travel = Math.max(i.offTravel, i.nobleTravel);
-			const cmd = { kind: 'Kareta', units: i.off, pop: i.pop, land: landing, send: landing - travel };
+		const escOk = (v, k) => !Object.keys(s.escort).some(u => (v.units[u] || 0) < k * s.escort[u]);
+		return villages.filter(v => n > 0 && (v.units.snob || 0) >= n && escOk(v, n - 1)).map(v => {
+			const i = villageInfo(v, target, s, speeds, n - 1);
+			const travel = Math.max(i.offTravel, i.nobleTravel);   // kareta idzie tempem szlachcica
+			const units = Object.assign({}, i.off, { snob: 1 });
+			const cmd = { kind: 'Kareta', units, pop: i.pop, land: landing, send: landing - travel };
 			return { v, dist: i.dist, pop: i.pop, off: i.off, cmd };
 		}).filter(r => r.pop > 0 && r.pop >= s.minPop).sort((a, b) => b.pop - a.pop);
 	}
@@ -330,9 +334,9 @@
 						<small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę –
 						kilka offów w małym odstępie też może tak wyglądać. Sprawdź godziny ataków.</small></span></td></tr>
 					<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${pageIncomingsHtml()}</td></tr>
-					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
+					<tr class="pk-atakonly"><td>Kareta</td><td>szlachciców w karecie: <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px">
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
-						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
+						<small>(albo wpisz ile chcesz; 0 = sam off; 1. szlachcic idzie w offie)</small>; eskorta każdego następnego szlachcica:
 						${escortInputs(s)}</td></tr>
 					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
 						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small>(Top, LK, ŁnK, CK, tarany, katapulty)</small>
@@ -340,7 +344,7 @@
 						<label><input type="radio" name="${NS}_preset" value="all" ${s.preset === 'all' ? 'checked' : ''}> wszystkie</label>
 						<label><input type="radio" name="${NS}_preset" value="custom" ${s.preset === 'custom' ? 'checked' : ''}> własne:</label>
 						<span id="${NS}_custom" style="${s.preset === 'custom' ? '' : 'display:none'}">${unitBoxes}</span>
-						<br><small class="pk-atakonly">Przy karecie od offa odejmowana jest eskorta szlachciców z tej wioski.</small></td></tr>
+						<br><small class="pk-atakonly">Przy karecie 1. szlachcic idzie w offie, a od offa odejmowana jest eskorta pozostałych szlachciców.</small></td></tr>
 					<tr><td>Wioski</td><td>grupa <select id="${NS}_group">${groupOpts}</select>
 						&nbsp; off co najmniej <input type="text" id="${NS}_minpop" value="${s.minPop}" style="width:50px"> populacji</td></tr>
 				</table>
@@ -477,9 +481,9 @@
 				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Kareta</th></tr>
 				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
 					${unitCells(r.v, r.off)}<td class="num">${r.pop}</td>${cmdCell(r.cmd, r.v, target, `Kareta (${r.pop} + ${s.nobles} szl.)`)}</tr>`).join('')
-					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${escortText(s) || 'bez eskorty'} na każdego)</small></td></tr>`}
+					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie ma ${s.nobles} szlachciców (1. w offie, pozostali z eskortą ${escortText(s) || 'bez eskorty'} na każdego)</small></td></tr>`}
 				</table></div>${foot}
-				<p style="margin:2px 0 0 0"><small>Link otwiera Plac z wpisanym offem; szlachciców do karety dodajesz na Placu. Godzina wysyłki liczona tempem szlachcica.</small></p>`);
+				<p style="margin:2px 0 0 0"><small>Link otwiera Plac z wpisanym offem i 1. szlachcicem; pozostałych szlachciców (z eskortą) dodajesz do karety na Placu. Godzina wysyłki liczona tempem szlachcica.</small></p>`);
 			tick();
 			return;
 		}
