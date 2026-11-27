@@ -1,5 +1,5 @@
 /*
- * Planer v2.2.0
+ * Planer v2.2.1
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.2.0';
+	const VERSION = 'v2.2.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -174,13 +174,17 @@
 		}
 		if (game_data.screen !== 'info_village') { return null; }
 		const id = Number((location.search.match(/[?&]id=(\d+)/) || [])[1] || (typeof VillageInfo !== 'undefined' ? VillageInfo.village_id : 0));
+		// współrzędne: pierwszy element z samym „553|491” – w wersji na komputer (tabela) i mobilnej (inne znaczniki)
+		const box = $('#content_value').length ? $('#content_value') : $('#mobileContent');
 		let x = 0, y = 0;
-		$('#content_value table.vis td').each(function () {
-			const m = $(this).text().trim().match(/^(\d{1,3})\|(\d{1,3})$/);
-			if (m && !x) { x = Number(m[1]); y = Number(m[2]); }
+		box.find('td, span, div, b, strong').each(function () {
+			if (x || this.children.length) { return; }
+			const m = $(this).text().trim().match(/^\(?(\d{1,3})\|(\d{1,3})\)?$/);
+			if (m) { x = Number(m[1]); y = Number(m[2]); }
 		});
 		if (!id || !x) { return null; }
-		return { id, x, y, name: $.trim($('#content_value h2').first().text()) || `${x}|${y}` };
+		const name = $.trim(box.find('h2').first().text()) || $.trim(box.find('h3, h4').first().text());
+		return { id, x, y, name: name || `${x}|${y}` };
 	}
 
 	// ---------- Dane z serwera gry ----------
