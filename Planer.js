@@ -1,5 +1,5 @@
 /*
- * Planer v2.1.3
+ * Planer v2.2.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -20,14 +20,14 @@
  * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
  * W Klinie godzinę wpisujesz ręcznie albo wklejasz listę ataków – po wklejeniu sama wpisze się godzina ostatniego
  * grubego z karety (ostatni z serii ataków z jednej wioski co ≤ 1 s), a bez karety – ostatniego ataku
- * (jeden atak = jego godzina). Skrypt czyta tylko to, co wkleisz.
+ * (jeden atak = jego godzina). Ataki widoczne na stronie skrypt tylko pokazuje – godzinę wybierasz kliknięciem.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
  */
 (function () {
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.1.3';
+	const VERSION = 'v2.2.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -74,7 +74,7 @@
 
 	// ---------- Czas z ataków (kareta) ----------
 	// wiersz: „… (416|471) K44 … Czas przybycia: 19.11.26 10:22:55:237 …” – zwykły tekst albo z linkami [..](..)
-	const INCOMING_RE = /\((\d{1,3}\|\d{1,3})\)[^\n]*?Czas przybycia:\s*(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})[:.,](\d{1,3})/;
+	const INCOMING_RE = /\((\d{1,3}\|\d{1,3})\)[^\n]*?(?:Czas przybycia|Arrival(?: time)?):\s*(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})[:.,](\d{1,3})/;
 	const KARETA_GAP_MS = 1000;
 	// zwraca { text: „19.11.2026 10:22:55:237”, kareta: bool } – ostatni gruby z karety, a bez karety ostatni atak; albo null
 	function lastNobleFromLines(lines) {
@@ -106,9 +106,16 @@
 		$('#commands_incomings tr.command-row').each(function () {
 			if (!$(this).find('img[src*="/command/attack"]').length) { return; }   // tylko ataki, bez wsparć
 			const txt = $(this).find('td').eq(1).text().replace(/\s+/g, ' ').trim();
-			const m = txt.match(/(dzisiaj|jutro|dnia (\d{1,2})\.(\d{1,2})\.?)\s*o\s*(\d{1,2}):(\d{2}):(\d{2}):?(\d{0,3})/);
+			// PL: „dzisiaj o …”, „jutro o …”, „dnia 28.11. o …”; EN (zz1): „today at …”, „tomorrow at …”, „on 28.11. at …”
+			const m = txt.match(/(dzisiaj|today|jutro|tomorrow|(?:dnia|on) (\d{1,2})\.(\d{1,2})\.?)\s*(?:o|at)\s*(\d{1,2}):(\d{2}):(\d{2}):?(\d{0,3})/i);
 			if (!m) { return; }
-			const date = m[1] === 'dzisiaj' ? todayStr() : m[1] === 'jutro' ? todayStr(1) : `${pad(m[2])}.${pad(m[3])}.${todayStr().slice(6)}`;
+			const word = m[1].toLowerCase();
+			let date = word === 'dzisiaj' || word === 'today' ? todayStr() : word === 'jutro' || word === 'tomorrow' ? todayStr(1) : '';
+			if (!date) {   // „dnia 01.01.” oglądane 31.12 to już następny rok
+				const y = Number(todayStr().slice(6));
+				date = `${pad(m[2])}.${pad(m[3])}.${y}`;
+				if (parseLanding(`${date} 23:59:59`) < nowMs() - 86400000) { date = `${pad(m[2])}.${pad(m[3])}.${y + 1}`; }
+			}
 			const text = `${date} ${pad(m[4])}:${m[5]}:${m[6]}:${(m[7] || '0').padEnd(3, '0')}`;
 			const t = parseLanding(text);
 			if (t !== null) { list.push({ t, text, key: '', name: $.trim($(this).find('.quickedit-label').text()) }); }
@@ -468,7 +475,8 @@
 		const bbLink = `<a href="#" id="${NS}_bb">[rozpiska BB]</a>
 			<div id="${NS}_bbbox" style="display:none;margin:4px 0"><textarea rows="5" style="width:98%" readonly></textarea><br>
 				<small>Skopiowane do schowka (jeśli przeglądarka pozwoliła).</small></div>`;
-		const foot = '<p style="margin:4px 0 0 0"><small>Na zielono: rozkaz jeszcze zdąży. Link otwiera Plac z wpisanymi wojskami i celem – atak wysyłasz sam, o godzinie z tabeli.</small></p>';
+		const foot = `<p style="margin:4px 0 0 0"><small>Na zielono: rozkaz jeszcze zdąży. Link otwiera Plac z wpisanymi wojskami i celem – ${s.mode === 'klin'
+			? 'klin wysyłasz sam jako <b>Wsparcie</b> (albo Atak, jeśli klin ma atakować), o godzinie z tabeli.' : 'atak wysyłasz sam, o godzinie z tabeli.'}</small></p>`;
 
 		if (s.mode === 'klin' || s.nobles === 0) {   // klin albo sam off: z każdej wioski jeden rozkaz
 			const klin = s.mode === 'klin';
@@ -523,6 +531,7 @@
 		if (!game_data.features || !game_data.features.Premium || !game_data.features.Premium.active) {
 			notify(`${NAME}: skrypt korzysta z Przeglądu wojsk, który wymaga Konta Premium.`, 'ErrorMessage'); return;
 		}
+		$('#' + NS).remove();   // drugi start: stary panel nie może mieszać się z odczytem strony
 		const target = readTarget();
 		if (!target) { notify(`${NAME}: otwórz stronę informacji o wiosce celu albo okno swojej wioski i uruchom skrypt ponownie.`, 'ErrorMessage'); return; }
 		const s = loadSettings();
