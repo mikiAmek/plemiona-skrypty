@@ -1,8 +1,9 @@
 /*
- * Planer v1.6.2
+ * Planer v1.7.0
  * Autor: Mavionis
  *
- * Strona informacji o wiosce celu: uruchom skrypt.
+ * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
+ * wioska, tryb ustawia się na Klin, a ataki z „Wojska przybywające” są listą do kliknięcia (kareta = ataki co ≤ 1 s).
  *
  * Dwa tryby:
  *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
@@ -24,7 +25,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.6.2';
+	const VERSION = 'v1.7.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -93,6 +94,29 @@
 		if (last) { return { text: last.text, kareta: true }; }
 		return cmds.length ? { text: cmds[cmds.length - 1].text, kareta: false } : null;
 	}
+	// okno własnej wioski: ataki z widżetu „Wojska przybywające” („dzisiaj o 09:40:55:249”, „jutro o …”, „dnia 28.11. o …”)
+	function readOwnIncomings() {
+		const list = [];
+		$('#commands_incomings tr.command-row').each(function () {
+			if (!$(this).find('img[src*="/command/attack"]').length) { return; }   // tylko ataki, bez wsparć
+			const txt = $(this).find('td').eq(1).text().replace(/\s+/g, ' ').trim();
+			const m = txt.match(/(dzisiaj|jutro|dnia (\d{1,2})\.(\d{1,2})\.?)\s*o\s*(\d{1,2}):(\d{2}):(\d{2}):?(\d{0,3})/);
+			if (!m) { return; }
+			let date = m[1] === 'dzisiaj' ? todayStr() : m[1] === 'jutro' ? todayStr(1) : `${pad(m[2])}.${pad(m[3])}.${todayStr().slice(6)}`;
+			const text = `${date} ${pad(m[4])}:${m[5]}:${m[6]}:${(m[7] || '0').padEnd(3, '0')}`;
+			const t = parseLanding(text);
+			if (t !== null) { list.push({ t, text, name: $.trim($(this).find('.quickedit-label').text()) }); }
+		});
+		list.sort((a, b) => a.t - b.t);
+		// kareta: kolejne ataki co ≤ 1 s (widżet nie pokazuje wioski źródłowej)
+		const groups = [];
+		list.forEach(c => {
+			const g = groups[groups.length - 1];
+			if (g && c.t - g[g.length - 1].t <= KARETA_GAP_MS) { g.push(c); } else { groups.push([c]); }
+		});
+		return groups;
+	}
+
 	const lastNobleTime = pasted => lastNobleFromLines(String(pasted || '').split('\n'));
 
 	function fmtLeft(ms) {
@@ -115,6 +139,12 @@
 
 	// ---------- Cel ----------
 	function readTarget() {
+		// okno własnej wioski: celem jest ta wioska (klin na atak przychodzący)
+		if (game_data.screen === 'overview' && game_data.village) {
+			const m = String(game_data.village.coord || '').match(/(\d{1,3})\|(\d{1,3})/);
+			if (!m) { return null; }
+			return { id: Number(game_data.village.id), x: +m[1], y: +m[2], name: String(game_data.village.name || m[0]), own: true };
+		}
 		if (game_data.screen !== 'info_village') { return null; }
 		const id = Number((location.search.match(/[?&]id=(\d+)/) || [])[1] || (typeof VillageInfo !== 'undefined' ? VillageInfo.village_id : 0));
 		let x = 0, y = 0;
@@ -234,6 +264,15 @@
 			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]${fmtTime(r.cmd.send, true)}[|]${r.pop}[|]${s.nobles}`).join('\n') + '\n[/table]';
 	}
 	// ---------- Panel ----------
+	function ownIncomingsHtml() {
+		const groups = readOwnIncomings();
+		if (!groups.length) { return '<small>brak ataków w „Wojska przybywające”</small>'; }
+		return groups.map(g => {
+			const last = g[g.length - 1];
+			const label = g.length > 1 ? `Kareta (${g.length}) – ostatni gruby ${last.text.slice(11)}` : `${esc(last.name || 'Atak')} – ${last.text.slice(11)}`;
+			return `<a href="#" class="${NS}_ownpick" data-time="${esc(last.text)}">${label}</a> <small>${last.text.slice(0, 10)}</small>`;
+		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>';
+	}
 	function render(state) {
 		const { s, target, groups } = state;
 		$('#' + NS).remove();
@@ -260,6 +299,7 @@
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
 						<span class="pk-klinonly"><small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
 						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea></span></td></tr>
+					${target.own ? `<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${ownIncomingsHtml()}</td></tr>` : ''}
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
 						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
@@ -332,6 +372,15 @@
 			if (this.id === `${NS}_ldate`) { state.dateManual = true; }
 		});
 		$('#' + NS).on('input', `#${NS}_incomings`, fillFromIncomings);
+		$('#' + NS).on('click', `.${NS}_ownpick`, function (e) {
+			e.preventDefault();
+			const [d, tm] = splitLanding(String($(this).data('time')));
+			$(`#${NS}_ldate`).val(d); $(`#${NS}_ltime`).val(tm);
+			state.ldate = d; state.dateManual = true;
+			$(`#${NS}_fetchinfo`).text('z ataków na wioskę');
+			state.s = read(); storageSet('ustawienia', state.s);
+			draw(state);
+		});
 		$('#' + NS).on('change', `#${NS}_group`, async () => {
 			state.s = read(); storageSet('ustawienia', state.s);
 			$(`#${NS}_out`).html('<p>Wczytuję wojska z grupy…</p>');
@@ -423,8 +472,9 @@
 			notify(`${NAME}: skrypt korzysta z Przeglądu wojsk, który wymaga Konta Premium.`, 'ErrorMessage'); return;
 		}
 		const target = readTarget();
-		if (!target) { notify(`${NAME}: otwórz stronę informacji o wiosce celu i uruchom skrypt ponownie.`, 'ErrorMessage'); return; }
+		if (!target) { notify(`${NAME}: otwórz stronę informacji o wiosce celu albo okno swojej wioski i uruchom skrypt ponownie.`, 'ErrorMessage'); return; }
 		const s = loadSettings();
+		if (target.own) { s.mode = 'klin'; }
 		const [speeds, data] = await Promise.all([unitSpeeds(), loadVillages(s.group)]);
 		render({ s, target, speeds, villages: data.villages, groups: data.groups });
 	}
