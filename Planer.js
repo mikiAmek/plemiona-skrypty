@@ -1,5 +1,5 @@
 /*
- * Planer v2.1.2
+ * Planer v2.1.3
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,7 +27,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.1.2';
+	const VERSION = 'v2.1.3';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -273,7 +273,8 @@
 	// Plac z wpisanymi wojskami (ten sam mechanizm co „Wstaw na plac” w symulatorze) – atak klika gracz
 	function placeLink(v, target, units) {
 		const t = game_data.player.sitter && Number(game_data.player.sitter) > 0 ? '&t=' + game_data.player.id : '';
-		return `/game.php?village=${v.id}${t}&screen=place&target=${target.id}&from=simulator` +
+		// target= sam nie wystarcza przy from=simulator (pole celu zostaje puste) – dokładamy współrzędne x, y
+		return `/game.php?village=${v.id}${t}&screen=place&target=${target.id}&x=${target.x}&y=${target.y}&from=simulator` +
 			Object.keys(units).map(n => `&att_${n}=${units[n]}`).join('');
 	}
 
