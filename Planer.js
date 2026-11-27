@@ -1,5 +1,5 @@
 /*
- * Planer v1.5.2
+ * Planer v1.6.0
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -15,16 +15,16 @@
  * ofensywne (domyślnie), defensywne, wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
  * atak klikasz sam. Rozpiska BB: off i jego szlachcice w jednym wierszu.
  * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
- * Godzinę wpisujesz ręcznie albo (w Klinie) bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
- * je widać) i „Pobierz z ataków” wpisze czas ostatniego grubego z karety (ostatni z serii ataków z jednej wioski
- * co ≤ 1 s), a bez karety – czas ostatniego ataku (jeden atak = jego czas). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
+ * W Klinie godzinę wpisujesz ręcznie albo wklejasz listę ataków – po wklejeniu sama wpisze się godzina ostatniego
+ * grubego z karety (ostatni z serii ataków z jednej wioski co ≤ 1 s), a bez karety – ostatniego ataku
+ * (jeden atak = jego godzina). Skrypt czyta tylko to, co wkleisz.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
  */
 (function () {
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.5.2';
+	const VERSION = 'v1.6.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -93,11 +93,7 @@
 		if (last) { return { text: last.text, kareta: true }; }
 		return cmds.length ? { text: cmds[cmds.length - 1].text, kareta: false } : null;
 	}
-	// ataki z wklejki, a gdy pusta – z wierszy tabel na bieżącej stronie
-	function lastNobleTime(pasted) {
-		if (String(pasted || '').trim()) { return lastNobleFromLines(String(pasted).split('\n')); }
-		return lastNobleFromLines($('#content_value tr').map(function () { return this.innerText.replace(/\s+/g, ' '); }).get());
-	}
+	const lastNobleTime = pasted => lastNobleFromLines(String(pasted || '').split('\n'));
 
 	function fmtLeft(ms) {
 		if (ms < 0) { return 'minęło'; }
@@ -259,13 +255,12 @@
 					<tr><td style="width:170px">Rodzaj</td><td>
 						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
 						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: tuż przed ostatnim grubym z karety</small></td></tr>
-					<tr><td>${s.mode === 'klin' ? 'Ostatni gruby (wejście)' : 'Wejście offa'}</td><td>
+					<tr><td>${s.mode === 'klin' ? 'Godzina ostatniego grubego' : 'Wejście offa'}</td><td>
 						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
-						<span class="pk-klinonly"><button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
-						<small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
-						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas). Puste pole = ataki ze strony."></textarea></span></td></tr>
+						<span class="pk-klinonly"><small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
+						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas)."></textarea></span></td></tr>
 					<tr class="pk-klinonly"><td>Klin wchodzi</td><td><input type="text" id="${NS}_klinbefore" value="${s.klinBefore}" style="width:40px"> ms przed ostatnim grubym</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
@@ -322,27 +317,24 @@
 			$(`#${NS}_nobles`).val($(this).data('n')).trigger('input');
 			$(`#${NS} .${NS}_nq`).css('font-weight', '').filter(this).css('font-weight', 'bold');
 		});
-		// czas z ataków: wklejka wpisuje sama, chyba że godzinę wpisano ręcznie; przycisk zawsze nadpisuje
-		const fillFromIncomings = force => {
+		// wklejenie ataków wpisuje godzinę (także gdy wcześniej wpisano ją ręcznie – wklejka to świadomy wybór)
+		const fillFromIncomings = () => {
 			const found = lastNobleTime($(`#${NS}_incomings`).val());
 			const t = found && found.text;
 			const info = $(`#${NS}_fetchinfo`);
-			if (!t) { if (force) { info.text('nie znaleziono ataków – wpisz godzinę ręcznie'); } return; }
-			if (!force && state.landingManual) { info.text(`ostatni gruby: ${t} (zostawiam ręczną godzinę)`); return; }
+			if (!t) { info.text($(`#${NS}_incomings`).val().trim() ? 'nie znalazłem ataków we wklejce – wpisz godzinę ręcznie' : ''); return; }
 			const [d, tm] = splitLanding(t);
 			$(`#${NS}_ldate`).val(d); $(`#${NS}_ltime`).val(tm);
 			state.ldate = d; state.dateManual = true;
-			state.landingManual = false;
 			info.text(found.kareta ? 'z karety (ostatni gruby)' : 'z ataków – brak karety, wzięty ostatni atak');
 			state.s = read(); storageSet('ustawienia', state.s);
 			draw(state);
 		};
 		$('#' + NS).on('input', `#${NS}_ltime, #${NS}_ldate`, function () {
-			state.landingManual = true; $(`#${NS}_fetchinfo`).text('ręcznie');
+			$(`#${NS}_fetchinfo`).text('ręcznie');
 			if (this.id === `${NS}_ldate`) { state.dateManual = true; }
 		});
-		$('#' + NS).on('input', `#${NS}_incomings`, () => fillFromIncomings(false));
-		$('#' + NS).on('click', `#${NS}_fetch`, e => { e.preventDefault(); fillFromIncomings(true); });
+		$('#' + NS).on('input', `#${NS}_incomings`, fillFromIncomings);
 		$('#' + NS).on('change', `#${NS}_group`, async () => {
 			state.s = read(); storageSet('ustawienia', state.s);
 			$(`#${NS}_out`).html('<p>Wczytuję wojska z grupy…</p>');
