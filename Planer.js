@@ -1,5 +1,5 @@
 /*
- * Planer v1.5.1
+ * Planer v1.5.2
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -17,14 +17,14 @@
  * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
  * Godzinę wpisujesz ręcznie albo (w Klinie) bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
  * je widać) i „Pobierz z ataków” wpisze czas ostatniego grubego z karety (ostatni z serii ataków z jednej wioski
- * co ≤ 1 s). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
+ * co ≤ 1 s), a bez karety – czas ostatniego ataku (jeden atak = jego czas). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
  */
 (function () {
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.5.1';
+	const VERSION = 'v1.5.2';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -265,7 +265,7 @@
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
 						<span class="pk-klinonly"><button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
 						<small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
-						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry (opcjonalnie) – wpisze się czas ostatniego grubego z karety. Puste pole = ataki ze strony."></textarea></span></td></tr>
+						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry. Wpisze się czas ostatniego grubego z karety, a jeśli karety nie ma – czas ostatniego ataku (jeden atak = jego czas). Puste pole = ataki ze strony."></textarea></span></td></tr>
 					<tr class="pk-klinonly"><td>Klin wchodzi</td><td><input type="text" id="${NS}_klinbefore" value="${s.klinBefore}" style="width:40px"> ms przed ostatnim grubym</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
