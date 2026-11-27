@@ -1,5 +1,5 @@
 /*
- * Planer v2.0.0
+ * Planer v2.1.0
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -27,13 +27,13 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v2.0.0';
+	const VERSION = 'v2.1.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
 	const LABEL = { spear: 'Pik', sword: 'Miecz', axe: 'Top', archer: 'Łuk', spy: 'Zw', light: 'LK', marcher: 'ŁnK', heavy: 'CK', ram: 'Tar', catapult: 'Kat', knight: 'Ryc', snob: 'Szl' };
 	const DEFAULTS = {
-		mode: 'atak', landing: '', nobles: 4, escort: { axe: 20, light: 20 }, minPop: 0, group: '0', preset: 'off',
+		mode: 'atak', landing: '', nobles: 4, reserve: 0, escort: { axe: 20, light: 20 }, minPop: 0, group: '0', preset: 'off',
 		offUnits: ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult']
 	};
 
@@ -149,6 +149,7 @@
 		s.escort = {};
 		ESCORT_UNITS.forEach(n => { const c = num(e[n], 0); if (c > 0) { s.escort[n] = c; } });
 		delete s.escAxe; delete s.escLight;
+		s.reserve = Math.min(num(s.reserve, 0), 10);
 		s.minPop = num(s.minPop, 0);
 		if (!['atak', 'klin'].includes(s.mode)) { s.mode = 'atak'; }
 		if (!['off', 'deff', 'all', 'custom'].includes(s.preset)) { s.preset = 'off'; }
@@ -246,9 +247,10 @@
 	};
 
 	// tryb Atak: z każdej wioski off na tę samą godzinę
-	function planAttacks(villages, target, s, speeds, landing) {
+	// reserve: przy samym offie zostaw w wiosce eskortę na tylu szlachciców (godzina liczona tempem offa)
+	function planAttacks(villages, target, s, speeds, landing, reserve = 0) {
 		return villages.map(v => {
-			const i = villageInfo(v, target, s, speeds, 0);
+			const i = villageInfo(v, target, s, speeds, reserve);
 			return { v, dist: i.dist, off: i.pop > 0 ? { units: i.off, pop: i.pop, land: landing, send: landing - i.offTravel } : null };
 		}).filter(r => r.off && r.off.pop >= s.minPop).sort((a, b) => a.off.send - b.off.send);
 	}
@@ -336,7 +338,10 @@
 					<tr class="pk-klinonly"><td style="vertical-align:top">Ataki na wioskę</td><td id="${NS}_own">${pageIncomingsHtml()}</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>szlachciców w karecie: <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px">
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
-						<small>(albo wpisz ile chcesz; 0 = sam off; 1. szlachcic idzie w offie)</small>; eskorta każdego następnego szlachcica:
+						<small>(albo wpisz ile chcesz; 0 = sam off; 1. szlachcic idzie w offie)</small>
+						<span id="${NS}_reservebox" style="${s.nobles === 0 ? '' : 'display:none'}"><br>sam off – zostaw w wiosce eskortę na
+						<input type="text" id="${NS}_reserve" value="${s.reserve}" style="width:25px"> szlachciców <small>(0 = cały off)</small></span>
+						<br>eskorta każdego następnego szlachcica:
 						${escortInputs(s)}</td></tr>
 					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
 						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small>(Top, LK, ŁnK, CK, tarany, katapulty)</small>
@@ -368,6 +373,7 @@
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'atak',
 			landing: readLanding(),
 			nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
+			reserve: Math.min(num($(`#${NS}_reserve`).val(), 0), 10),
 			escort: (() => { const e = {}; $(`.${NS}_esc`).each(function () { const c = num(this.value, 0); if (c > 0) { e[this.dataset.unit] = c; } }); return e; })(),
 			minPop: num($(`#${NS}_minpop`).val(), 0), group: String($(`#${NS}_group`).val()),
 			preset: $(`input[name=${NS}_preset]:checked`).val() || 'off',
@@ -378,6 +384,7 @@
 			const modeChanged = this.name === `${NS}_mode` || this.name === `${NS}_preset`;
 			if (this.name === `${NS}_preset`) { $(`#${NS}_custom`).toggle(this.value === 'custom'); }
 			state.s = read(); storageSet('ustawienia', state.s);
+			$(`#${NS}_reservebox`).toggle(state.s.nobles === 0);
 			if (modeChanged) { render(state); return; }
 			draw(state);
 		});
@@ -461,7 +468,7 @@
 		if (s.mode === 'klin' || s.nobles === 0) {   // klin albo sam off: z każdej wioski jeden rozkaz
 			const klin = s.mode === 'klin';
 			const land = landing;
-			const rows = planAttacks(villages, target, s, speeds, land);
+			const rows = planAttacks(villages, target, s, speeds, land, klin ? 0 : s.reserve);
 			state.bb = bbAttacks(rows, target, land, klin ? 'klin – wejście' : 'wejście');
 			out.html(`<p style="margin:0 0 4px 0">${klin ? 'Klinów' : 'Ataków'}: <b>${rows.length}</b> z ${villages.length} wiosek, wejście: <b>${fmtTime(land, true)}</b>. ${bbLink}</p>
 				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop.</th><th>Atak</th></tr>
