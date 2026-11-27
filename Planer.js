@@ -1,5 +1,5 @@
 /*
- * Planer v1.1.0
+ * Planer v1.2.0
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
@@ -13,13 +13,16 @@
  * (domyślnie 20 toporników + 20 LK) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
  * ofensywne (domyślnie), wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
  * atak klikasz sam. Rozpiska BB: off i jego szlachcice w jednym wierszu.
+ * Godzinę wejścia wpisujesz ręcznie albo bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
+ * je widać) i „Pobierz z ataków” wpisze czas ostatniego grubego z karety (ostatni z serii ataków z jednej wioski
+ * co ≤ 1 s). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
  */
 (function () {
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.1.0';
+	const VERSION = 'v1.2.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -58,6 +61,37 @@
 		const ms = m[7] ? Number(m[7].padEnd(3, '0')) : 0;
 		return Date.UTC(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +m[6], ms) - utcDiff();
 	}
+	// ---------- Czas z ataków (kareta) ----------
+	// wiersz: „… (416|471) K44 … Czas przybycia: 19.11.26 10:22:55:237 …” – zwykły tekst albo z linkami [..](..)
+	const INCOMING_RE = /\((\d{1,3}\|\d{1,3})\)[^\n]*?Czas przybycia:\s*(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})[:.,](\d{1,3})/;
+	const KARETA_GAP_MS = 1000;
+	// zwraca czas ostatniego grubego jako tekst do pola wejścia („19.11.2026 10:22:55:237”) albo null
+	function lastNobleFromLines(lines) {
+		const cmds = lines.map(line => {
+			const m = String(line).match(INCOMING_RE);
+			if (!m) { return null; }
+			const year = m[4].length === 2 ? 2000 + Number(m[4]) : Number(m[4]);
+			const ms = m[8].padEnd(3, '0');
+			return {
+				coords: m[1],
+				t: Date.UTC(year, +m[3] - 1, +m[2], +m[5], +m[6], +m[7], +ms),   // tylko do porównań (czas serwera)
+				text: `${m[2]}.${m[3]}.${year} ${pad(m[5])}:${m[6]}:${m[7]}:${ms}`
+			};
+		}).filter(Boolean).sort((a, b) => a.t - b.t);
+		// atak należy do karety, gdy wchodzi ≤ 1 s po poprzednim z tej samej wioski; bierzemy ostatni taki
+		let last = null;
+		cmds.forEach((c, i) => {
+			const prev = cmds.slice(0, i).reverse().find(p => p.coords === c.coords);
+			if (prev && c.t - prev.t <= KARETA_GAP_MS) { last = c; }
+		});
+		return last ? last.text : null;
+	}
+	// ataki z wklejki, a gdy pusta – z wierszy tabel na bieżącej stronie
+	function lastNobleTime(pasted) {
+		if (String(pasted || '').trim()) { return lastNobleFromLines(String(pasted).split('\n')); }
+		return lastNobleFromLines($('#content_value tr').map(function () { return this.innerText.replace(/\s+/g, ' '); }).get());
+	}
+
 	function fmtLeft(ms) {
 		if (ms < 0) { return 'minęło'; }
 		const s = Math.floor(ms / 1000);
@@ -246,7 +280,10 @@
 						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski, wszystkie wchodzą o tej samej godzinie</small><br>
 						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– off, a za nim szlachcice co kilka ms (szlachcice mogą iść z innych wiosek)</small></td></tr>
 					<tr><td>Wejście ${s.mode === 'klin' ? 'offa' : 'ataków'}</td><td><input type="text" id="${NS}_landing" value="${esc(s.landing)}" placeholder="27.11.2026 20:15:30:000" style="width:190px">
-						<small>– czas serwera, dd.mm.rrrr gg:mm:ss:mmm</small></td></tr>
+						<small>– czas serwera, dd.mm.rrrr gg:mm:ss:mmm</small>
+						<button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
+						<small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
+						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry (opcjonalnie) – wpisze się czas ostatniego grubego z karety. Puste pole = ataki ze strony."></textarea></td></tr>
 					<tr class="pk-klinopt"><td>Szlachcice</td><td><input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> w klinie, co
 						<input type="text" id="${NS}_gap" value="${s.gap}" style="width:40px"> ms po offie; eskorta każdego:
 						<input type="text" id="${NS}_escaxe" value="${s.escAxe}" style="width:35px"> Top +
@@ -280,6 +317,21 @@
 			if (modeChanged) { render(state); return; }
 			draw(state);
 		});
+		// czas z ataków: wklejka wpisuje sama, chyba że godzinę wpisano ręcznie; przycisk zawsze nadpisuje
+		const fillFromIncomings = force => {
+			const t = lastNobleTime($(`#${NS}_incomings`).val());
+			const info = $(`#${NS}_fetchinfo`);
+			if (!t) { if (force) { info.text('nie znaleziono karety – wpisz godzinę ręcznie'); } return; }
+			if (!force && state.landingManual) { info.text(`ostatni gruby: ${t} (zostawiam ręczną godzinę)`); return; }
+			$(`#${NS}_landing`).val(t);
+			state.landingManual = false;
+			info.text('z ataków');
+			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
+			draw(state);
+		};
+		$('#' + NS).on('input', `#${NS}_landing`, () => { state.landingManual = true; $(`#${NS}_fetchinfo`).text('ręcznie'); });
+		$('#' + NS).on('input', `#${NS}_incomings`, () => fillFromIncomings(false));
+		$('#' + NS).on('click', `#${NS}_fetch`, e => { e.preventDefault(); fillFromIncomings(true); });
 		$('#' + NS).on('change', `#${NS}_group`, async () => {
 			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
 			$(`#${NS}_out`).html('<p>Wczytuję wojska z grupy…</p>');
