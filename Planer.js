@@ -1,20 +1,21 @@
 /*
- * Planer v1.3.0
+ * Planer v1.4.0
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
  *
  * Dwa tryby:
- *  - Atak: z każdej wioski off, który wchodzi na cel o ustawionej godzinie,
- *  - Klin: off z jednej wioski, a za nim szlachcice (z dowolnych wiosek) co X ms; skrypt sam proponuje
- *    najmocniejszy off i najbliższych szlachciców, które zdążą – można to zmienić w tabeli.
+ *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
+ *    z tej samej wioski co X ms; eskorta każdego szlachcica odejmowana od offa),
+ *  - Klin: wojsko (ofensywne, defensywne, wszystkie albo własne) z każdej wioski wchodzi pomiędzy grube –
+ *    X ms przed ostatnim grubym z karety wroga.
  * Wojska w domu ze wszystkich wiosek wybranej grupy (Przegląd > Wojska, wszystkie strony), dokładny zegar gry
  * (milisekundy), czas podróży zaokrąglany do pełnej sekundy jak w grze, eskorta każdego szlachcica
  * (domyślnie 20 toporników + 20 LK) odejmowana od wojsk wioski. Wojska w offie jednym kliknięciem:
- * ofensywne (domyślnie), wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
+ * ofensywne (domyślnie), defensywne, wszystkie albo własny wybór. Link otwiera Plac z wpisanymi wojskami –
  * atak klikasz sam. Rozpiska BB: off i jego szlachcice w jednym wierszu.
  * Wejście: dwa okienka – data (domyślnie dzisiaj, sama przechodzi na jutro, gdy godzina już minęła) i godzina.
- * Godzinę wpisujesz ręcznie albo bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
+ * Godzinę wpisujesz ręcznie albo (w Klinie) bierzesz z ataków: wklej listę ataków (albo uruchom na stronie, na której
  * je widać) i „Pobierz z ataków” wpisze czas ostatniego grubego z karety (ostatni z serii ataków z jednej wioski
  * co ≤ 1 s). Ręczny wpis zostaje, dopóki sam nie klikniesz „Pobierz z ataków”.
  * Skrypt niczego nie wysyła ani nie klika. Zapytania: Przegląd wojsk i prędkości jednostek (interface.php) z serwera gry.
@@ -23,13 +24,13 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.3.0';
+	const VERSION = 'v1.4.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
 	const LABEL = { spear: 'Pik', sword: 'Miecz', axe: 'Top', archer: 'Łuk', spy: 'Zw', light: 'LK', marcher: 'ŁnK', heavy: 'CK', ram: 'Tar', catapult: 'Kat', knight: 'Ryc', snob: 'Szl' };
 	const DEFAULTS = {
-		mode: 'klin', landing: '', gap: 100, nobles: 4, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
+		mode: 'atak', landing: '', gap: 100, nobles: 4, klinBefore: 50, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
 		offUnits: ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult']
 	};
 
@@ -110,8 +111,9 @@
 		s.escAxe = num(s.escAxe, DEFAULTS.escAxe);
 		s.escLight = num(s.escLight, DEFAULTS.escLight);
 		s.minPop = num(s.minPop, 0);
-		if (!['atak', 'klin'].includes(s.mode)) { s.mode = 'klin'; }
-		if (!['off', 'all', 'custom'].includes(s.preset)) { s.preset = 'off'; }
+		if (!['atak', 'klin'].includes(s.mode)) { s.mode = 'atak'; }
+		s.klinBefore = num(s.klinBefore, DEFAULTS.klinBefore);
+		if (!['off', 'deff', 'all', 'custom'].includes(s.preset)) { s.preset = 'off'; }
 		if (!Array.isArray(s.offUnits)) { s.offUnits = DEFAULTS.offUnits.slice(); }
 		return s;
 	}
@@ -173,8 +175,9 @@
 	// ---------- Obliczenia ----------
 	// jednostki w offie: gotowy wybór albo własny (zaznaczenia schowane pod „inne jednostki”)
 	const OFF_UNITS = ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult'];
+	const DEFF_UNITS = ['spear', 'sword', 'archer', 'heavy'];
 	const offUnitsOf = s => (s.preset === 'all' ? UNITS.filter(n => n !== 'snob' && n !== 'knight')
-		: s.preset === 'custom' ? s.offUnits : OFF_UNITS);
+		: s.preset === 'custom' ? s.offUnits : s.preset === 'deff' ? DEFF_UNITS : OFF_UNITS);
 	const travelMs = (dist, speed) => Math.round(dist * speed * 60) * 1000;   // gra zaokrągla do pełnej sekundy
 
 	// wojska wioski po odjęciu eskorty k szlachciców; off z zaznaczonych jednostek
@@ -207,42 +210,19 @@
 		}).filter(r => r.off && r.off.pop >= s.minPop).sort((a, b) => a.off.send - b.off.send);
 	}
 
-	// tryb Klin: propozycja – najmocniejszy off, który zdąży, i najbliżsi szlachcice, którzy zdążą
-	function proposeKlin(villages, target, s, speeds, landing, now) {
-		const pick = {};
-		let need = s.nobles;
-		villages.map(v => ({ v, k: maxNobles(v, s), i: villageInfo(v, target, s, speeds, 1) }))
-			.filter(x => x.k > 0 && landing + s.gap - x.i.nobleTravel > now)
-			.sort((a, b) => a.i.dist - b.i.dist)
-			.forEach(x => { if (need > 0) { const n = Math.min(x.k, need); pick[x.v.id] = n; need -= n; } });
-		let best = null;
-		villages.forEach(v => {
-			const i = villageInfo(v, target, s, speeds, pick[v.id] || 0);
-			if (i.pop >= Math.max(1, s.minPop) && landing - i.offTravel > now && (!best || i.pop > best.pop)) { best = { id: v.id, pop: i.pop }; }
-		});
-		return { offId: best ? best.id : null, nobles: pick };
-	}
-
-	// rozkazy klina wg wyboru: off o T, szlachcice o T + gap, T + 2·gap … w kolejności tabeli
-	function buildKlin(villages, target, s, speeds, landing, klin) {
-		const byId = new Map(villages.map(v => [v.id, v]));
-		const cmds = [];
-		const off = byId.get(klin.offId);
-		if (off) {
-			const i = villageInfo(off, target, s, speeds, klin.nobles[off.id] || 0);
-			if (i.pop > 0) { cmds.push({ kind: 'Off', v: off, units: i.off, pop: i.pop, land: landing, send: landing - i.offTravel }); }
-		}
-		let n = 0;
-		villages.forEach(v => {
-			const k = Math.min(klin.nobles[v.id] || 0, maxNobles(v, s));
-			const i = villageInfo(v, target, s, speeds, k);
-			for (let j = 0; j < k; j++) {
-				n++;
-				const land = landing + n * s.gap;
-				cmds.push({ kind: `Szlachcic ${n}`, v, units: i.escort, land, send: land - i.nobleTravel });
+	// tryb Atak z karetą: z każdej wioski, która ma n szlachciców z eskortą – off (minus eskorta) o T, szlachcice o T + gap, T + 2·gap …
+	function planKarety(villages, target, s, speeds, landing) {
+		const n = s.nobles;
+		return villages.filter(v => n > 0 && maxNobles(v, s) >= n).map(v => {
+			const i = villageInfo(v, target, s, speeds, n);
+			const cmds = [];
+			if (i.pop > 0) { cmds.push({ kind: 'Off', units: i.off, pop: i.pop, land: landing, send: landing - i.offTravel }); }
+			for (let j = 1; j <= n; j++) {
+				const land = landing + j * s.gap;
+				cmds.push({ kind: `Szlachcic ${j}`, units: i.escort, land, send: land - i.nobleTravel });
 			}
-		});
-		return cmds;
+			return { v, dist: i.dist, pop: i.pop, off: i.off, cmds };
+		}).filter(r => r.pop >= s.minPop).sort((a, b) => b.pop - a.pop);
 	}
 
 	// Plac z wpisanymi wojskami (ten sam mechanizm co „Wstaw na plac” w symulatorze) – atak klika gracz
@@ -252,17 +232,16 @@
 			Object.keys(units).map(n => `&att_${n}=${units[n]}`).join('');
 	}
 
-	function bbAttacks(rows, target, landing) {
-		return `Cel: [coord]${target.x}|${target.y}[/coord] – wejście: ${fmtTime(landing, true)}\n[table][**]Wioska[||]Wysyłka[||]Populacja[/**]\n` +
+	function bbAttacks(rows, target, landing, title = 'wejście') {
+		return `Cel: [coord]${target.x}|${target.y}[/coord] – ${title}: ${fmtTime(landing, true)}\n[table][**]Wioska[||]Wysyłka[||]Populacja[/**]\n` +
 			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]${fmtTime(r.off.send, true)}[|]${r.off.pop}`).join('\n') + '\n[/table]';
 	}
-	function bbKlin(cmds, target, s, landing) {
-		const head = cmds.map(c => c.kind);
-		const cells = cmds.map(c => `[coord]${c.v.x}|${c.v.y}[/coord] ${fmtTime(c.send, true)}`);
-		return `Cel: [coord]${target.x}|${target.y}[/coord] – wejście offa: ${fmtTime(landing, true)}, szlachcice co ${s.gap} ms\n` +
-			`[table][**]${head.join('[||]')}[/**]\n[*]${cells.join('[|]')}\n[/table]`;
+	function bbKarety(rows, target, s, landing) {
+		return `Cel: [coord]${target.x}|${target.y}[/coord] – kareta: wejście offa ${fmtTime(landing, true)}, ${s.nobles} szlachciców co ${s.gap} ms\n` +
+			`[table][**]Wioska[||]Off (pop.)[||]${Array.from({ length: s.nobles }, (_, j) => `Szlachcic ${j + 1}`).join('[||]')}[/**]\n` +
+			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]` +
+				r.cmds.map(c => (c.kind === 'Off' ? `${fmtTime(c.send, true)} (${c.pop})` : fmtTime(c.send, true))).join('[|]')).join('\n') + '\n[/table]';
 	}
-
 	// ---------- Panel ----------
 	function render(state) {
 		const { s, target, groups } = state;
@@ -282,31 +261,36 @@
 				<table class="vis" style="width:100%">
 					<tr><th colspan="2">Cel: ${esc(target.name)} (${target.x}|${target.y})</th></tr>
 					<tr><td style="width:170px">Rodzaj</td><td>
-						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski, wszystkie wchodzą o tej samej godzinie</small><br>
-						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– off, a za nim szlachcice co kilka ms (szlachcice mogą iść z innych wiosek)</small></td></tr>
-					<tr><td>Wejście ${s.mode === 'klin' ? 'offa' : 'ataków'}</td><td>
+						<label><input type="radio" name="${NS}_mode" value="atak" ${s.mode === 'atak' ? 'checked' : ''}> <b>Atak</b></label> <small>– off z każdej wioski o tej samej godzinie: sam off albo kareta (off + szlachcice z tej samej wioski)</small><br>
+						<label><input type="radio" name="${NS}_mode" value="klin" ${s.mode === 'klin' ? 'checked' : ''}> <b>Klin</b></label> <small>– wojsko z każdej wioski wchodzi pomiędzy grube: tuż przed ostatnim grubym z karety</small></td></tr>
+					<tr><td>${s.mode === 'klin' ? 'Ostatni gruby (wejście)' : 'Wejście offa'}</td><td>
 						<input type="text" id="${NS}_ldate" value="${esc(state.ldate || todayStr())}" placeholder="dd.mm.rrrr" style="width:80px" title="data (czas serwera)">
 						<input type="text" id="${NS}_ltime" value="${esc(splitLanding(s.landing)[1])}" placeholder="20:15:30:000" style="width:95px" title="godzina gg:mm:ss:mmm (czas serwera)">
 						<small>– data i godzina (czas serwera), ms opcjonalnie</small>
-						<button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
+						<span class="pk-klinonly"><button type="button" id="${NS}_fetch" class="btn" style="margin-left:6px">Pobierz z ataków</button>
 						<small id="${NS}_fetchinfo" style="margin-left:4px"></small><br>
-						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry (opcjonalnie) – wpisze się czas ostatniego grubego z karety. Puste pole = ataki ze strony."></textarea></td></tr>
-					<tr class="pk-klinopt"><td>Szlachcice za offem</td><td>wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców, każdy wchodzi
+						<textarea id="${NS}_incomings" rows="3" style="width:98%;margin-top:4px" placeholder="Wklej ataki z gry (opcjonalnie) – wpisze się czas ostatniego grubego z karety. Puste pole = ataki ze strony."></textarea></span></td></tr>
+					<tr class="pk-klinonly"><td>Klin wchodzi</td><td><input type="text" id="${NS}_klinbefore" value="${s.klinBefore}" style="width:40px"> ms przed ostatnim grubym</td></tr>
+					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
+						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
+						<small>(albo wpisz ile chcesz; 0 = sam off)</small>, każdy wchodzi
 						<input type="text" id="${NS}_gap" value="${s.gap}" style="width:40px"> ms po poprzednim (pierwszy – po offie); eskorta na szlachcica:
 						<input type="text" id="${NS}_escaxe" value="${s.escAxe}" style="width:35px"> Top +
 						<input type="text" id="${NS}_esclight" value="${s.escLight}" style="width:35px"> LK</td></tr>
-					<tr><td style="vertical-align:top">Wojska w offie</td><td>
+					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
 						<label><input type="radio" name="${NS}_preset" value="off" ${s.preset === 'off' ? 'checked' : ''}> ofensywne</label> <small>(Top, LK, ŁnK, CK, tarany, katapulty)</small>
+						<label><input type="radio" name="${NS}_preset" value="deff" ${s.preset === 'deff' ? 'checked' : ''}> defensywne</label> <small>(Pik, Miecz, Łuk, CK)</small>
 						<label><input type="radio" name="${NS}_preset" value="all" ${s.preset === 'all' ? 'checked' : ''}> wszystkie</label>
 						<label><input type="radio" name="${NS}_preset" value="custom" ${s.preset === 'custom' ? 'checked' : ''}> własne:</label>
 						<span id="${NS}_custom" style="${s.preset === 'custom' ? '' : 'display:none'}">${unitBoxes}</span>
-						<br><small>Od toporników i LK zawsze odejmowana jest eskorta szlachciców z tej wioski.</small></td></tr>
+						<br><small class="pk-atakonly">Przy karecie od toporników i LK odejmowana jest eskorta szlachciców z tej wioski.</small></td></tr>
 					<tr><td>Wioski</td><td>grupa <select id="${NS}_group">${groupOpts}</select>
 						&nbsp; off co najmniej <input type="text" id="${NS}_minpop" value="${s.minPop}" style="width:50px"> populacji</td></tr>
 				</table>
 				<div id="${NS}_out" style="margin-top:6px"></div>
 			</div>`);
-		$(`#${NS} .pk-klinopt`).toggle(s.mode === 'klin');
+		$(`#${NS} .pk-klinonly`).toggle(s.mode === 'klin');
+		$(`#${NS} .pk-atakonly`).toggle(s.mode === 'atak');
 		// data + godzina → „dd.mm.rrrr gg:mm:ss:mmm”; bez ręcznej daty: dzisiaj, a gdy godzina już minęła – jutro
 		const readLanding = () => {
 			const time = String($(`#${NS}_ltime`).val()).trim();
@@ -320,7 +304,8 @@
 			return `${date} ${time}`;
 		};
 		const read = () => ({
-			mode: $(`input[name=${NS}_mode]:checked`).val() || 'klin',
+			mode: $(`input[name=${NS}_mode]:checked`).val() || 'atak',
+			klinBefore: num($(`#${NS}_klinbefore`).val(), DEFAULTS.klinBefore),
 			landing: readLanding(),
 			gap: num($(`#${NS}_gap`).val(), DEFAULTS.gap), nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
 			escAxe: num($(`#${NS}_escaxe`).val(), DEFAULTS.escAxe), escLight: num($(`#${NS}_esclight`).val(), DEFAULTS.escLight),
@@ -328,13 +313,19 @@
 			preset: $(`input[name=${NS}_preset]:checked`).val() || 'off',
 			offUnits: $(`.${NS}_unit:checked`).map(function () { return this.value; }).get()
 		});
-		// zmiana ustawień: przelicz; propozycję klina liczymy od nowa (ręczny wybór w tabeli zostaje do następnej zmiany)
+		// zmiana ustawień: przelicz
 		$('#' + NS).on('input change', 'table:first input', function () {
-			const modeChanged = this.name === `${NS}_mode`;
+			const modeChanged = this.name === `${NS}_mode` || this.name === `${NS}_preset`;
 			if (this.name === `${NS}_preset`) { $(`#${NS}_custom`).toggle(this.value === 'custom'); }
-			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
+			state.s = read(); storageSet('ustawienia', state.s);
 			if (modeChanged) { render(state); return; }
 			draw(state);
+		});
+		// szybki wybór liczby szlachciców: 3 / 4 / 5 (albo wpisz dowolną w polu)
+		$('#' + NS).on('click', `.${NS}_nq`, function (e) {
+			e.preventDefault();
+			$(`#${NS}_nobles`).val($(this).data('n')).trigger('input');
+			$(`#${NS} .${NS}_nq`).css('font-weight', '').filter(this).css('font-weight', 'bold');
 		});
 		// czas z ataków: wklejka wpisuje sama, chyba że godzinę wpisano ręcznie; przycisk zawsze nadpisuje
 		const fillFromIncomings = force => {
@@ -347,7 +338,7 @@
 			state.ldate = d; state.dateManual = true;
 			state.landingManual = false;
 			info.text('z ataków');
-			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
+			state.s = read(); storageSet('ustawienia', state.s);
 			draw(state);
 		};
 		$('#' + NS).on('input', `#${NS}_ltime, #${NS}_ldate`, function () {
@@ -357,16 +348,10 @@
 		$('#' + NS).on('input', `#${NS}_incomings`, () => fillFromIncomings(false));
 		$('#' + NS).on('click', `#${NS}_fetch`, e => { e.preventDefault(); fillFromIncomings(true); });
 		$('#' + NS).on('change', `#${NS}_group`, async () => {
-			state.s = read(); storageSet('ustawienia', state.s); state.klin = null;
+			state.s = read(); storageSet('ustawienia', state.s);
 			$(`#${NS}_out`).html('<p>Wczytuję wojska z grupy…</p>');
 			try { Object.assign(state, await loadVillages(state.s.group)); draw(state); }
 			catch (ex) { $(`#${NS}_out`).html(`<p style="color:#b00"><b>${esc(typeof ex === 'string' ? ex : 'nie udało się wczytać wojsk.')}</b></p>`); }
-		});
-		// wybór klina w tabeli wiosek
-		$('#' + NS).on('change', `input[name=${NS}_offpick]`, function () { state.klin.offId = Number(this.value); draw(state); });
-		$('#' + NS).on('input', `.${NS}_npick`, function () {
-			state.klin.nobles[Number($(this).data('id'))] = Math.min(num(this.value, 0), Number($(this).data('max')));
-			draw(state, true);
 		});
 		$('#' + NS).on('click', `#${NS}_bb`, function (e) {
 			e.preventDefault();
@@ -387,11 +372,11 @@
 		? `<td class="pk-cmd" data-send="${c.send}"><a href="${placeLink(v, target, c.units)}">${label}</a><br><small>${fmtShort(c.send)}</small><br><span class="pk-cd"></span></td>`
 		: '<td></td>');
 
-	function draw(state, keepInputs) {
+	function draw(state) {
 		const { s, target, speeds, villages } = state;
 		const out = $(`#${NS}_out`);
 		const landing = parseLanding(s.landing);
-		if (!s.landing) { out.html(`<p>Wpisz godzinę wejścia ${s.mode === 'klin' ? 'offa' : 'ataków'}.</p>`); return; }
+		if (!s.landing) { out.html(`<p>Wpisz ${s.mode === 'klin' ? 'czas ostatniego grubego' : 'godzinę wejścia offa'}.</p>`); return; }
 		if (landing === null) { out.html('<p style="color:#b00"><b>Godzina wejścia: wpisz np. 27.11.2026 20:15:30:000</b></p>'); return; }
 		const heads = unitHeads().map(n => `<th><img src="${image_base}unit/unit_${n}.webp" title="${n}" alt="${LABEL[n]}"></th>`).join('');
 		const bbLink = `<a href="#" id="${NS}_bb">[rozpiska BB]</a>
@@ -399,48 +384,37 @@
 				<small>Skopiowane do schowka (jeśli przeglądarka pozwoliła).</small></div>`;
 		const foot = '<p style="margin:4px 0 0 0"><small>Na zielono: rozkaz jeszcze zdąży. Link otwiera Plac z wpisanymi wojskami i celem – atak wysyłasz sam, o godzinie z tabeli.</small></p>';
 
-		if (s.mode === 'atak') {
-			const rows = planAttacks(villages, target, s, speeds, landing);
-			state.bb = bbAttacks(rows, target, landing);
-			out.html(`<p style="margin:0 0 4px 0">Ataków: <b>${rows.length}</b> z ${villages.length} wiosek, wejście: <b>${fmtTime(landing, true)}</b>. ${bbLink}</p>
+		if (s.mode === 'klin' || s.nobles === 0) {   // klin albo sam off: z każdej wioski jeden rozkaz
+			const klin = s.mode === 'klin';
+			const land = klin ? landing - s.klinBefore : landing;
+			const rows = planAttacks(villages, target, s, speeds, land);
+			state.bb = bbAttacks(rows, target, land, klin ? `klin (${s.klinBefore} ms przed ostatnim grubym ${fmtTime(landing)})` : 'wejście');
+			out.html(`<p style="margin:0 0 4px 0">${klin ? 'Klinów' : 'Ataków'}: <b>${rows.length}</b> z ${villages.length} wiosek, wejście: <b>${fmtTime(land, true)}</b>${klin ? ` (${s.klinBefore} ms przed ostatnim grubym)` : ''}. ${bbLink}</p>
 				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop.</th><th>Atak</th></tr>
 				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
-					${unitCells(r.v, r.off.units)}<td class="num">${r.off.pop}</td>${cmdCell(r.off, r.v, target, 'Atak')}</tr>`).join('')
+					${unitCells(r.v, r.off.units)}<td class="num">${r.off.pop}</td>${cmdCell(r.off, r.v, target, klin ? 'Klin' : 'Atak')}</tr>`).join('')
 					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie spełnia warunków</small></td></tr>`}
 				</table></div>${foot}`);
 			tick();
 			return;
 		}
 
-		// Klin
-		if (!state.klin) { state.klin = proposeKlin(villages, target, s, speeds, landing, nowMs()); }
-		const cmds = buildKlin(villages, target, s, speeds, landing, state.klin);
-		state.bb = bbKlin(cmds, target, s, landing);
-		const summary = cmds.length ? `<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr>${cmds.map(c => `<th>${c.kind}</th>`).join('')}</tr>
-			<tr>${cmds.map(c => `<td style="text-align:center"><b>${esc(c.v.name)}</b><br><small>wejście ${fmtTime(c.land)}</small></td>`).join('')}</tr>
-			<tr>${cmds.map(c => cmdCell(c, c.v, target, c.kind === 'Off' ? `Off (${c.pop})` : c.kind)).join('')}</tr></table></div>`
-			: '<p><small>Wybierz off i szlachciców w tabeli niżej.</small></p>';
-		const list = villages.map(v => {
-			const k = maxNobles(v, s);
-			const picked = state.klin.nobles[v.id] || 0;
-			const i = villageInfo(v, target, s, speeds, picked);
-			const offOk = landing - i.offTravel > nowMs();
-			const nobOk = landing + s.gap - i.nobleTravel > nowMs();
-			if (!(i.pop >= s.minPop && i.pop > 0) && !k) { return ''; }
-			return `<tr class="${v.id === state.klin.offId || picked ? 'pk-sel' : ''}">
-				<td><b>${esc(v.name)}</b><br><small>${v.x}|${v.y} · ${i.dist.toFixed(1).replace('.', ',')} pola</small></td>${unitCells(v, i.off)}
-				<td class="num">${i.pop}</td>
-				<td style="text-align:center">${i.pop > 0 ? `<input type="radio" name="${NS}_offpick" value="${v.id}" ${v.id === state.klin.offId ? 'checked' : ''}>${offOk ? '' : '<br><small>nie zdąży</small>'}` : ''}</td>
-				<td style="text-align:center">${k ? `<input type="text" class="${NS}_npick" data-id="${v.id}" data-max="${k}" value="${picked}" style="width:25px"> / ${k}${nobOk ? '' : '<br><small>nie zdąży</small>'}` : ''}</td></tr>`;
-		}).join('');
-		if (keepInputs) {   // wpisywanie liczby szlachciców: odśwież tylko podsumowanie, żeby nie zgubić kursora
-			$(`#${NS}_klin`).html(summary); tick(); return;
+		{   // atak z karetą
+			const rows = planKarety(villages, target, s, speeds, landing);
+			state.bb = bbKarety(rows, target, s, landing);
+			const nobHeads = Array.from({ length: s.nobles }, (_, j) => `<th>Szl. ${j + 1}</th>`).join('');
+			out.html(`<p style="margin:0 0 4px 0">Kareta – <b>${s.nobles}</b> szlachciców co ${s.gap} ms, wejście offa <b>${fmtTime(landing, true)}</b>.
+				Wiosek z ${s.nobles} szlachcicami i eskortą: <b>${rows.length}</b>. ${bbLink}</p>
+				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Off</th>${nobHeads}</tr>
+				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
+					${unitCells(r.v, r.off)}<td class="num">${r.pop}</td>
+					${r.cmds.map(c => cmdCell(c, r.v, target, c.kind === 'Off' ? `Off (${c.pop})` : c.kind.replace('Szlachcic ', 'Szl. '))).join('')}</tr>`).join('')
+					|| `<tr><td colspan="${unitHeads().length + 3 + s.nobles}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${s.escAxe} Top + ${s.escLight} LK na każdego)</small></td></tr>`}
+				</table></div>${foot}`);
+			tick();
+			return;
 		}
-		out.html(`<p style="margin:0 0 4px 0">Klin – wejście offa <b>${fmtTime(landing, true)}</b>, szlachcice co ${s.gap} ms. ${bbLink}</p>
-			<div id="${NS}_klin">${summary}</div>
-			<p style="margin:8px 0 4px 0"><b>Wybór:</b> <small>skrypt zaproponował najmocniejszy off i najbliższych szlachciców, którzy zdążą. Zmień w kolumnach „Off” i „Szlachcice”.</small></p>
-			<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Off</th><th>Szlachcice</th></tr>${list}</table></div>${foot}`);
-		tick();
+
 	}
 
 	// odliczanie: jedna pętla na stronę, tylko wyświetla czas
@@ -468,7 +442,7 @@
 		if (!target) { notify(`${NAME}: otwórz stronę informacji o wiosce celu i uruchom skrypt ponownie.`, 'ErrorMessage'); return; }
 		const s = loadSettings();
 		const [speeds, data] = await Promise.all([unitSpeeds(), loadVillages(s.group)]);
-		render({ s, target, speeds, villages: data.villages, groups: data.groups, klin: null });
+		render({ s, target, speeds, villages: data.villages, groups: data.groups });
 	}
 
 	if (Date.now() - (window[NS + '_lastRun'] || 0) < 500) { return; } // gra potrafi wykonać skrót dwa razy naraz
