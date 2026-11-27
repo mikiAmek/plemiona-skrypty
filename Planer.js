@@ -1,12 +1,12 @@
 /*
- * Planer v1.4.0
+ * Planer v1.5.0
  * Autor: Mavionis
  *
  * Strona informacji o wiosce celu: uruchom skrypt.
  *
  * Dwa tryby:
  *  - Atak: z każdej wioski off na ustawioną godzinę – sam off albo kareta (off + 3, 4, 5 albo ile chcesz szlachciców
- *    z tej samej wioski co X ms; eskorta każdego szlachcica odejmowana od offa),
+ *    z tej samej wioski, wysłane razem; odstępy ms między nimi ustala gra; eskorta każdego szlachcica odejmowana od offa),
  *  - Klin: wojsko (ofensywne, defensywne, wszystkie albo własne) z każdej wioski wchodzi pomiędzy grube –
  *    X ms przed ostatnim grubym z karety wroga.
  * Wojska w domu ze wszystkich wiosek wybranej grupy (Przegląd > Wojska, wszystkie strony), dokładny zegar gry
@@ -24,13 +24,13 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.4.0';
+	const VERSION = 'v1.5.0';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
 	const LABEL = { spear: 'Pik', sword: 'Miecz', axe: 'Top', archer: 'Łuk', spy: 'Zw', light: 'LK', marcher: 'ŁnK', heavy: 'CK', ram: 'Tar', catapult: 'Kat', knight: 'Ryc', snob: 'Szl' };
 	const DEFAULTS = {
-		mode: 'atak', landing: '', gap: 100, nobles: 4, klinBefore: 50, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
+		mode: 'atak', landing: '', nobles: 4, klinBefore: 50, escAxe: 20, escLight: 20, minPop: 0, group: '0', preset: 'off',
 		offUnits: ['axe', 'light', 'marcher', 'heavy', 'ram', 'catapult']
 	};
 
@@ -106,7 +106,6 @@
 
 	function loadSettings() {
 		const s = Object.assign({}, DEFAULTS, storageGet('ustawienia') || {});
-		s.gap = num(s.gap, DEFAULTS.gap);
 		s.nobles = Math.min(num(s.nobles, DEFAULTS.nobles), 10);
 		s.escAxe = num(s.escAxe, DEFAULTS.escAxe);
 		s.escLight = num(s.escLight, DEFAULTS.escLight);
@@ -210,19 +209,16 @@
 		}).filter(r => r.off && r.off.pop >= s.minPop).sort((a, b) => a.off.send - b.off.send);
 	}
 
-	// tryb Atak z karetą: z każdej wioski, która ma n szlachciców z eskortą – off (minus eskorta) o T, szlachcice o T + gap, T + 2·gap …
+	// tryb Atak z karetą: z każdej wioski, która ma n szlachciców z eskortą – jedna wysyłka (off + szlachcice razem).
+	// Kareta idzie tempem najwolniejszej jednostki (szlachcic), odstępy ms między rozkazami ustala gra.
 	function planKarety(villages, target, s, speeds, landing) {
 		const n = s.nobles;
 		return villages.filter(v => n > 0 && maxNobles(v, s) >= n).map(v => {
 			const i = villageInfo(v, target, s, speeds, n);
-			const cmds = [];
-			if (i.pop > 0) { cmds.push({ kind: 'Off', units: i.off, pop: i.pop, land: landing, send: landing - i.offTravel }); }
-			for (let j = 1; j <= n; j++) {
-				const land = landing + j * s.gap;
-				cmds.push({ kind: `Szlachcic ${j}`, units: i.escort, land, send: land - i.nobleTravel });
-			}
-			return { v, dist: i.dist, pop: i.pop, off: i.off, cmds };
-		}).filter(r => r.pop >= s.minPop).sort((a, b) => b.pop - a.pop);
+			const travel = Math.max(i.offTravel, i.nobleTravel);
+			const cmd = { kind: 'Kareta', units: i.off, pop: i.pop, land: landing, send: landing - travel };
+			return { v, dist: i.dist, pop: i.pop, off: i.off, cmd };
+		}).filter(r => r.pop > 0 && r.pop >= s.minPop).sort((a, b) => b.pop - a.pop);
 	}
 
 	// Plac z wpisanymi wojskami (ten sam mechanizm co „Wstaw na plac” w symulatorze) – atak klika gracz
@@ -237,10 +233,9 @@
 			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]${fmtTime(r.off.send, true)}[|]${r.off.pop}`).join('\n') + '\n[/table]';
 	}
 	function bbKarety(rows, target, s, landing) {
-		return `Cel: [coord]${target.x}|${target.y}[/coord] – kareta: wejście offa ${fmtTime(landing, true)}, ${s.nobles} szlachciców co ${s.gap} ms\n` +
-			`[table][**]Wioska[||]Off (pop.)[||]${Array.from({ length: s.nobles }, (_, j) => `Szlachcic ${j + 1}`).join('[||]')}[/**]\n` +
-			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]` +
-				r.cmds.map(c => (c.kind === 'Off' ? `${fmtTime(c.send, true)} (${c.pop})` : fmtTime(c.send, true))).join('[|]')).join('\n') + '\n[/table]';
+		return `Cel: [coord]${target.x}|${target.y}[/coord] – kareta (off + ${s.nobles} szl.): wejście ${fmtTime(landing, true)}\n` +
+			'[table][**]Wioska[||]Wysyłka karety[||]Off (pop.)[||]Szlachcice[/**]\n' +
+			rows.map(r => `[*][coord]${r.v.x}|${r.v.y}[/coord][|]${fmtTime(r.cmd.send, true)}[|]${r.pop}[|]${s.nobles}`).join('\n') + '\n[/table]';
 	}
 	// ---------- Panel ----------
 	function render(state) {
@@ -273,8 +268,7 @@
 					<tr class="pk-klinonly"><td>Klin wchodzi</td><td><input type="text" id="${NS}_klinbefore" value="${s.klinBefore}" style="width:40px"> ms przed ostatnim grubym</td></tr>
 					<tr class="pk-atakonly"><td>Kareta</td><td>za offem wyślij <input type="text" id="${NS}_nobles" value="${s.nobles}" style="width:25px"> szlachciców
 						${[0, 3, 4, 5].map(k => `<a href="#" class="${NS}_nq" data-n="${k}" style="${k === s.nobles ? 'font-weight:bold' : ''}">[${k ? k : 'sam off'}]</a>`).join(' ')}
-						<small>(albo wpisz ile chcesz; 0 = sam off)</small>, każdy wchodzi
-						<input type="text" id="${NS}_gap" value="${s.gap}" style="width:40px"> ms po poprzednim (pierwszy – po offie); eskorta na szlachcica:
+						<small>(albo wpisz ile chcesz; 0 = sam off)</small>; eskorta na szlachcica:
 						<input type="text" id="${NS}_escaxe" value="${s.escAxe}" style="width:35px"> Top +
 						<input type="text" id="${NS}_esclight" value="${s.escLight}" style="width:35px"> LK</td></tr>
 					<tr><td style="vertical-align:top">${s.mode === 'klin' ? 'Wojska w klinie' : 'Wojska w offie'}</td><td>
@@ -307,7 +301,7 @@
 			mode: $(`input[name=${NS}_mode]:checked`).val() || 'atak',
 			klinBefore: num($(`#${NS}_klinbefore`).val(), DEFAULTS.klinBefore),
 			landing: readLanding(),
-			gap: num($(`#${NS}_gap`).val(), DEFAULTS.gap), nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
+			nobles: Math.min(num($(`#${NS}_nobles`).val(), DEFAULTS.nobles), 10),
 			escAxe: num($(`#${NS}_escaxe`).val(), DEFAULTS.escAxe), escLight: num($(`#${NS}_esclight`).val(), DEFAULTS.escLight),
 			minPop: num($(`#${NS}_minpop`).val(), 0), group: String($(`#${NS}_group`).val()),
 			preset: $(`input[name=${NS}_preset]:checked`).val() || 'off',
@@ -402,15 +396,14 @@
 		{   // atak z karetą
 			const rows = planKarety(villages, target, s, speeds, landing);
 			state.bb = bbKarety(rows, target, s, landing);
-			const nobHeads = Array.from({ length: s.nobles }, (_, j) => `<th>Szl. ${j + 1}</th>`).join('');
-			out.html(`<p style="margin:0 0 4px 0">Kareta – <b>${s.nobles}</b> szlachciców co ${s.gap} ms, wejście offa <b>${fmtTime(landing, true)}</b>.
+			out.html(`<p style="margin:0 0 4px 0">Kareta – off + <b>${s.nobles}</b> szlachciców z jednej wioski, wejście <b>${fmtTime(landing, true)}</b>.
 				Wiosek z ${s.nobles} szlachcicami i eskortą: <b>${rows.length}</b>. ${bbLink}</p>
-				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Off</th>${nobHeads}</tr>
+				<div style="overflow-x:auto"><table class="vis" style="width:100%"><tr><th>Wioska</th>${heads}<th>Pop. offa</th><th>Kareta</th></tr>
 				${rows.map(r => `<tr><td><b>${esc(r.v.name)}</b><br><small>${r.v.x}|${r.v.y} · ${r.dist.toFixed(1).replace('.', ',')} pola</small></td>
-					${unitCells(r.v, r.off)}<td class="num">${r.pop}</td>
-					${r.cmds.map(c => cmdCell(c, r.v, target, c.kind === 'Off' ? `Off (${c.pop})` : c.kind.replace('Szlachcic ', 'Szl. '))).join('')}</tr>`).join('')
-					|| `<tr><td colspan="${unitHeads().length + 3 + s.nobles}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${s.escAxe} Top + ${s.escLight} LK na każdego)</small></td></tr>`}
-				</table></div>${foot}`);
+					${unitCells(r.v, r.off)}<td class="num">${r.pop}</td>${cmdCell(r.cmd, r.v, target, `Kareta (${r.pop} + ${s.nobles} szl.)`)}</tr>`).join('')
+					|| `<tr><td colspan="${unitHeads().length + 3}"><small>żadna wioska nie ma ${s.nobles} szlachciców z eskortą (${s.escAxe} Top + ${s.escLight} LK na każdego)</small></td></tr>`}
+				</table></div>${foot}
+				<p style="margin:2px 0 0 0"><small>Link otwiera Plac z wpisanym offem; szlachciców do karety dodajesz na Placu. Godzina wysyłki liczona tempem szlachcica.</small></p>`);
 			tick();
 			return;
 		}
