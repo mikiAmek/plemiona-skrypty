@@ -1,5 +1,5 @@
 /*
- * Planer v1.7.0
+ * Planer v1.7.1
  * Autor: Mavionis
  *
  * Uruchom na stronie informacji o wiosce celu albo w oknie własnej wioski (Przegląd wioski) – wtedy celem jest ta
@@ -25,7 +25,7 @@
 	'use strict';
 
 	const NAME = 'Planer';
-	const VERSION = 'v1.7.0';
+	const VERSION = 'v1.7.1';
 	const NS = 'PlanerAtakow';
 	const UNITS = ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult', 'knight', 'snob'];
 	const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
@@ -271,7 +271,9 @@
 			const last = g[g.length - 1];
 			const label = g.length > 1 ? `Kareta (${g.length}) – ostatni gruby ${last.text.slice(11)}` : `${esc(last.name || 'Atak')} – ${last.text.slice(11)}`;
 			return `<a href="#" class="${NS}_ownpick" data-time="${esc(last.text)}">${label}</a> <small>${last.text.slice(0, 10)}</small>`;
-		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>';
+		}).join('<br>') + '<br><small>Kliknij, żeby wpisać godzinę.</small>' +
+			'<br><small style="color:#b00"><b>Uwaga:</b> ataki wchodzące jeden po drugim w odstępie do 1 s skrypt traktuje jak karetę – ' +
+			'kilka offów w małym odstępie też może tak wyglądać. Sprawdź godziny w „Wojska przybywające”.</small>';
 	}
 	function render(state) {
 		const { s, target, groups } = state;
