@@ -361,7 +361,7 @@
 		const { s, target, speeds, villages } = state;
 		const out = $(`#${NS}_out`);
 		const landing = parseLanding(s.landing);
-		if (!s.landing) { out.html(`<p>Wpisz ${s.mode === 'klin' ? 'czas ostatniego grubego' : 'godzinę wejścia offa'}.</p>`); return; }
+		if (!s.landing) { out.html(`<p>Wpisz ${s.mode === 'klin' ? 'godzinę ataku przychodzącego' : 'godzinę wejścia offa'}.</p>`); return; }
 		if (landing === null) { out.html('<p style="color:#b00"><b>Godzina wejścia: wpisz np. 27.11.2026 20:15:30:000</b></p>'); return; }
 		const heads = unitHeads().map(n => `<th><img src="${image_base}unit/unit_${n}.webp" title="${n}" alt="${LABEL[n]}"></th>`).join('');
 		const bbLink = `<a href="#" id="${NS}_bb">[rozpiska BB]</a>
